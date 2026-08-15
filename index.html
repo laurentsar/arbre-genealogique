@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Arbre généalogique</title>
+<meta name="theme-color" content="#1c1410">
+<meta name="description" content="Application indépendante pour gérer votre arbre généalogique : personnes, unions, ascendants, descendants, export GEDCOM.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="img/icon-192.png">
+<link rel="apple-touch-icon" href="img/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <h1>🌳 Arbre généalogique</h1>
+  <button id="btnAddPerson" class="btn btn-accent" title="Ajouter une personne">+ Personne</button>
+</header>
+
+<main id="views">
+
+  <section id="view-tree" class="view active">
+    <div class="tree-toolbar">
+      <div class="tree-toolbar-row">
+        <span class="tree-root-label">Centré sur <strong id="treeRootName">—</strong></span>
+        <button id="btnChangeRoot" class="btn btn-ghost btn-sm">Changer</button>
+      </div>
+      <div class="tree-toolbar-row">
+        <div class="segmented" id="modeSwitch">
+          <button data-mode="ancestors" class="active">Ascendants</button>
+          <button data-mode="descendants">Descendants</button>
+        </div>
+        <label class="gen-stepper">
+          Générations
+          <input id="genRange" type="range" min="1" max="7" value="4">
+          <span id="genValue">4</span>
+        </label>
+      </div>
+    </div>
+    <div class="tree-canvas-wrap">
+      <svg id="treeSvg" class="tree-canvas"></svg>
+      <div id="treeEmpty" class="tree-empty hidden">
+        <p>Aucune personne pour l'instant.</p>
+        <button id="btnEmptyAdd" class="btn btn-accent">Ajouter la première personne</button>
+      </div>
+      <div class="tree-zoom-controls">
+        <button id="btnZoomIn" class="btn btn-round" title="Zoom avant">+</button>
+        <button id="btnZoomOut" class="btn btn-round" title="Zoom arrière">−</button>
+        <button id="btnZoomReset" class="btn btn-round" title="Réinitialiser la vue">⤢</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="view-list" class="view">
+    <div class="list-toolbar">
+      <input id="searchInput" type="search" placeholder="Rechercher une personne, un lieu, une note…">
+    </div>
+    <ul id="personList" class="person-list"></ul>
+    <p id="personListEmpty" class="empty-hint hidden">Aucun résultat.</p>
+  </section>
+
+  <section id="view-settings" class="view">
+    <div class="settings-card">
+      <h2>Personne racine de l'arbre</h2>
+      <p class="muted">Celle depuis laquelle l'arbre est affiché par défaut.</p>
+      <select id="rootSelect"></select>
+    </div>
+
+    <div class="settings-card">
+      <h2>Statistiques</h2>
+      <p><span id="statPersons">0</span> personne(s) · <span id="statUnions">0</span> union(s)</p>
+    </div>
+
+    <div class="settings-card">
+      <h2>Sauvegarde</h2>
+      <p class="muted">Vos données restent uniquement sur cet appareil (stockage local). Exportez régulièrement une sauvegarde.</p>
+      <div class="btn-row">
+        <button id="btnExportJson" class="btn">Exporter (.json)</button>
+        <label class="btn btn-file">Importer (.json)<input id="importJsonInput" type="file" accept=".json,application/json" hidden></label>
+      </div>
+    </div>
+
+    <div class="settings-card">
+      <h2>Format GEDCOM</h2>
+      <p class="muted">Standard d'échange généalogique, compatible avec d'autres logiciels (Geneanet, Heredis, Gramps…).</p>
+      <div class="btn-row">
+        <button id="btnExportGedcom" class="btn">Exporter (.ged)</button>
+        <label class="btn btn-file">Importer (.ged)<input id="importGedcomInput" type="file" accept=".ged" hidden></label>
+      </div>
+    </div>
+
+    <div class="settings-card settings-danger">
+      <h2>Réinitialiser</h2>
+      <p class="muted">Supprime toutes les personnes et unions de cet appareil. Pensez à exporter une sauvegarde avant.</p>
+      <button id="btnReset" class="btn btn-danger">Tout effacer</button>
+    </div>
+  </section>
+
+</main>
+
+<nav class="bottombar">
+  <button data-view="tree" class="active">🌳<span>Arbre</span></button>
+  <button data-view="list">👤<span>Personnes</span></button>
+  <button data-view="settings">⚙️<span>Réglages</span></button>
+</nav>
+
+<dialog id="personDialog" class="app-dialog">
+  <form id="personForm" method="dialog">
+    <h2 id="personFormTitle">Nouvelle personne</h2>
+    <div class="form-grid">
+      <label>Prénom<input id="fPrenom" type="text" required></label>
+      <label>Nom<input id="fNom" type="text"></label>
+      <label>Sexe
+        <select id="fSexe">
+          <option value="?">Non précisé</option>
+          <option value="H">Homme</option>
+          <option value="F">Femme</option>
+        </select>
+      </label>
+      <label class="check-inline"><input id="fDecede" type="checkbox"> Décédé(e)</label>
+      <label>Date de naissance<input id="fNaissanceDate" type="text" placeholder="AAAA-MM-JJ ou AAAA"></label>
+      <label>Lieu de naissance<input id="fNaissanceLieu" type="text"></label>
+      <label>Date de décès<input id="fDecesDate" type="text" placeholder="AAAA-MM-JJ ou AAAA"></label>
+      <label>Lieu de décès<input id="fDecesLieu" type="text"></label>
+      <label class="span2">Notes<textarea id="fNotes" rows="3"></textarea></label>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" id="btnPersonCancel" class="btn btn-ghost">Annuler</button>
+      <button type="submit" class="btn btn-accent">Enregistrer</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="detailDialog" class="app-dialog detail-dialog">
+  <div id="detailContent"></div>
+  <div class="dialog-actions">
+    <button type="button" id="btnDetailClose" class="btn btn-ghost">Fermer</button>
+  </div>
+</dialog>
+
+<dialog id="pickerDialog" class="app-dialog">
+  <h2 id="pickerTitle">Choisir une personne</h2>
+  <input id="pickerSearch" type="search" placeholder="Rechercher…">
+  <ul id="pickerList" class="person-list picker-list"></ul>
+  <div class="dialog-actions">
+    <button type="button" id="pickerNew" class="btn btn-accent">+ Nouvelle personne</button>
+    <button type="button" id="pickerCancel" class="btn btn-ghost">Annuler</button>
+  </div>
+</dialog>
+
+<script src="store.js"></script>
+<script src="gedcom.js"></script>
+<script src="tree.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
