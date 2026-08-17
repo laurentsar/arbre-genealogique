@@ -14,7 +14,7 @@
 <body>
 
 <header class="topbar">
-  <h1>🌳 Arbre généalogique</h1>
+  <h1>🌳 Arbre généalogique <span class="app-version" id="appVersion"></span></h1>
   <button id="btnAddPerson" class="btn btn-accent" title="Ajouter une personne">+ Personne</button>
 </header>
 
@@ -59,6 +59,7 @@
   <section id="view-list" class="view">
     <div class="list-toolbar">
       <input id="searchInput" type="search" placeholder="Rechercher une personne, un lieu, une note…">
+      <button id="btnOnlineSearch" class="btn btn-sm" title="Rechercher dans la base généalogique libre WikiTree">🔍 Rechercher en ligne</button>
     </div>
     <ul id="personList" class="person-list"></ul>
     <p id="personListEmpty" class="empty-hint hidden">Aucun résultat.</p>
@@ -98,6 +99,11 @@
       <h2>Réinitialiser</h2>
       <p class="muted">Supprime toutes les personnes et unions de cet appareil. Pensez à exporter une sauvegarde avant.</p>
       <button id="btnReset" class="btn btn-danger">Tout effacer</button>
+    </div>
+
+    <div class="settings-card">
+      <h2>À propos</h2>
+      <p class="muted">Arbre généalogique · version <span id="appVersionSettings">—</span></p>
     </div>
   </section>
 
@@ -164,8 +170,27 @@
   </div>
 </dialog>
 
+<dialog id="onlineSearchDialog" class="app-dialog">
+  <h2>Rechercher en ligne (WikiTree)</h2>
+  <p class="muted">Base généalogique collaborative libre. Recherchez une personne puis importez-la — seule, ou avec ses parents, conjoints et enfants — directement dans votre arbre.</p>
+  <div class="form-grid">
+    <label>Prénom<input id="wtFirstName" type="text"></label>
+    <label>Nom<input id="wtLastName" type="text"></label>
+  </div>
+  <label class="check-inline" style="margin-top:10px"><input id="wtWithRelatives" type="checkbox" checked> Importer aussi les proches (parents, conjoints, enfants)</label>
+  <div class="btn-row" style="margin-top:10px">
+    <button type="button" id="wtSearchBtn" class="btn btn-accent">Rechercher</button>
+  </div>
+  <p id="wtStatus" class="muted" style="margin:10px 0 0"></p>
+  <ul id="wtResults" class="person-list picker-list" style="margin-top:10px"></ul>
+  <div class="dialog-actions">
+    <button type="button" id="wtClose" class="btn btn-ghost">Fermer</button>
+  </div>
+</dialog>
+
 <script src="store.js"></script>
 <script src="gedcom.js"></script>
+<script src="wikitree.js"></script>
 <script src="tree.js"></script>
 <script src="app.js"></script>
 </body>

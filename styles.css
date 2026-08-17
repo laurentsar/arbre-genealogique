@@ -42,6 +42,7 @@ button, input, select, textarea { font-family: inherit; }
   flex: 0 0 auto;
 }
 .topbar h1 { font-size: 1.05rem; margin: 0; font-weight: 600; }
+.app-version { font-size: 0.7rem; font-weight: 500; color: var(--muted); vertical-align: middle; }
 
 #views { flex: 1 1 auto; min-height: 0; position: relative; }
 .view { display: none; height: 100%; overflow: auto; }

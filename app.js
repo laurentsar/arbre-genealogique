@@ -527,6 +527,114 @@
     }
   });
 
+  // --- Recherche généalogique en ligne (WikiTree) ------------------------
+
+  var onlineDlg = $('#onlineSearchDialog');
+  var wtResults = $('#wtResults');
+  var wtStatus = $('#wtStatus');
+
+  function openOnlineSearch() {
+    wtResults.innerHTML = '';
+    wtStatus.textContent = '';
+    onlineDlg.showModal();
+  }
+
+  function fmtMatch(m) {
+    var name = ((m.FirstName || '') + ' ' + (m.LastNameAtBirth || m.LastNameCurrent || '')).trim() || m.Name;
+    var b = m.BirthDate && m.BirthDate !== '0000-00-00' ? m.BirthDate.slice(0, 4) : '';
+    var d = m.DeathDate && m.DeathDate !== '0000-00-00' ? m.DeathDate.slice(0, 4) : '';
+    var years = (b || d) ? ' (' + b + (d ? '–' + d : '') + ')' : '';
+    var loc = m.BirthLocation ? ' · ' + m.BirthLocation : '';
+    return { name: name, sub: (m.IsLiving ? 'Vivant · ' : '') + m.Name + years + loc };
+  }
+
+  function runOnlineSearch() {
+    var fn = $('#wtFirstName').value.trim();
+    var ln = $('#wtLastName').value.trim();
+    if (!fn && !ln) { wtStatus.textContent = 'Saisissez au moins un prénom ou un nom.'; return; }
+    wtStatus.textContent = 'Recherche…';
+    wtResults.innerHTML = '';
+    WikiTree.search(fn, ln, 25).then(function (matches) {
+      if (!matches.length) { wtStatus.textContent = 'Aucun résultat.'; return; }
+      wtStatus.textContent = matches.length + ' résultat(s). Choisissez qui importer :';
+      matches.forEach(function (m) {
+        var info = fmtMatch(m);
+        var li = document.createElement('li');
+        li.innerHTML = avatarHTML({ prenom: m.FirstName, nom: m.LastNameAtBirth || m.LastNameCurrent }) +
+          '<div style="flex:1 1 auto;min-width:0">' +
+          '<div class="person-line-name">' + escapeHtml(info.name) + '</div>' +
+          '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div></div>' +
+          '<button class="btn btn-sm btn-accent" type="button">Importer</button>';
+        li.querySelector('button').addEventListener('click', function () { importFromWikiTree(m.Name, li); });
+        wtResults.appendChild(li);
+      });
+    }).catch(function (err) {
+      wtStatus.textContent = 'Échec de la recherche : ' + err.message;
+    });
+  }
+
+  function importFromWikiTree(key, li) {
+    var withRel = $('#wtWithRelatives').checked;
+    var btn = li.querySelector('button');
+    btn.disabled = true; btn.textContent = 'Import…';
+    WikiTree.getRelatives(key).then(function (rel) {
+      // Index des personnes déjà importées (par identifiant WikiTree) pour éviter les doublons.
+      var byKey = {};
+      Object.keys(state.persons).forEach(function (id) {
+        var w = state.persons[id].wikitree;
+        if (w) byKey[w] = state.persons[id];
+      });
+      function ensure(profile) {
+        if (!profile || !profile.Name) return null;
+        if (byKey[profile.Name]) return byKey[profile.Name];
+        var p = Store.addPerson(state, WikiTree.toFields(profile));
+        byKey[profile.Name] = p;
+        return p;
+      }
+      var main = ensure(rel.person);
+      if (withRel) {
+        var father = ensure(rel.parents[rel.fatherId]);
+        var mother = ensure(rel.parents[rel.motherId]);
+        var pIds = [];
+        if (father) pIds.push(father.id);
+        if (mother) pIds.push(mother.id);
+        if (pIds.length) main.parentIds = pIds;
+        if (father && mother) Store.findOrCreateUnion(state, [father.id, mother.id]);
+        var spouseIds = Object.keys(rel.spouses || {})
+          .map(function (k) { return ensure(rel.spouses[k]); })
+          .filter(Boolean).map(function (s) { return s.id; });
+        spouseIds.forEach(function (sid) { Store.findOrCreateUnion(state, [main.id, sid]); });
+        Object.keys(rel.children || {}).forEach(function (k) {
+          var c = ensure(rel.children[k]);
+          if (!c) return;
+          var partners = spouseIds.length ? [main.id, spouseIds[0]] : [main.id];
+          var u = Store.findOrCreateUnion(state, partners);
+          Store.addChildToUnion(state, u.id, c.id);
+        });
+      }
+      state.rootId = main.id;
+      Store.save(state);
+      refreshAll();
+      wtStatus.textContent = 'Importé : ' + Store.fullName(main) + (withRel ? ' (avec ses proches)' : '') + '. Arbre recentré.';
+      btn.textContent = '✓ Importé';
+    }).catch(function (err) {
+      btn.disabled = false; btn.textContent = 'Importer';
+      wtStatus.textContent = 'Échec de l’import : ' + err.message;
+    });
+  }
+
+  $('#btnOnlineSearch').addEventListener('click', openOnlineSearch);
+  $('#wtSearchBtn').addEventListener('click', runOnlineSearch);
+  $('#wtClose').addEventListener('click', function () { onlineDlg.close(); });
+  $('#wtFirstName').addEventListener('keydown', function (e) { if (e.key === 'Enter') runOnlineSearch(); });
+  $('#wtLastName').addEventListener('keydown', function (e) { if (e.key === 'Enter') runOnlineSearch(); });
+
+  // --- Version affichée ---------------------------------------------------
+
+  var APP_VERSION = '1.2.0';
+  var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
+  var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
+
   // --- PWA / démarrage ----------------------------------------------------
 
   if ('serviceWorker' in navigator) {
