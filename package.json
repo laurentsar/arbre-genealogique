@@ -1,11 +1,12 @@
 {
   "name": "arbre-genealogique",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "type": "module",
   "description": "Application indépendante de gestion d'arbre généalogique (GEDCOM, ascendants/descendants).",
   "scripts": {
-    "build": "node scripts/build-www.mjs",
+    "stamp": "node scripts/stamp-version.mjs",
+    "build": "node scripts/stamp-version.mjs && node scripts/build-www.mjs",
     "build:apk": "npm run build && npx cap sync android && cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
