@@ -1,1 +1,6 @@
 .DS_Store
+
+# Node / Capacitor
+node_modules
+www
+*.log

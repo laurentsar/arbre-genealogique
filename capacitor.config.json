@@ -1,0 +1,9 @@
+{
+  "appId": "com.laurentsar.genealogie",
+  "appName": "Arbre généalogique",
+  "webDir": "www",
+  "backgroundColor": "#16110d",
+  "android": {
+    "backgroundColor": "#16110d"
+  }
+}

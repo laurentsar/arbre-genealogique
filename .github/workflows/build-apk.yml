@@ -1,0 +1,75 @@
+name: Build & Release Android APK
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'README.md'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install JS deps
+        run: npm ci
+
+      - name: Build web assets (www)
+        run: npm run build
+
+      - name: Sync Capacitor (Android)
+        run: npx cap sync android
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      # Repo public => pas de keystore secret committé.
+      # On construit un APK debug (signé par la clé debug intégrée),
+      # installable directement sur un téléphone perso.
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Read app version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Rename APK with version
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk "arbre-genealogique-${{ steps.version.outputs.version }}.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arbre-genealogique-apk
+          path: arbre-genealogique-${{ steps.version.outputs.version }}.apk
+          if-no-files-found: error
+
+      - name: Create / update GitHub Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: "Arbre généalogique v${{ steps.version.outputs.version }}"
+          files: arbre-genealogique-${{ steps.version.outputs.version }}.apk
+          fail_on_unmatched_files: true
+          generate_release_notes: true
