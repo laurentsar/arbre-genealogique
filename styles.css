@@ -10,6 +10,8 @@
   --danger: #c0574a;
   --male: #5c8fb0;
   --female: #b97a9a;
+  --line-union: #7fae66;
+  --line-child: var(--accent-strong);
   --radius: 12px;
 }
 
@@ -32,6 +34,9 @@ button, input, select, textarea { font-family: inherit; }
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
+  padding-top: max(12px, env(safe-area-inset-top));
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   flex: 0 0 auto;
@@ -89,20 +94,38 @@ button, input, select, textarea { font-family: inherit; }
 
 .tree-zoom-controls { position: absolute; right: 14px; bottom: 14px; display: flex; flex-direction: column; gap: 8px; }
 
+.tree-legend {
+  position: absolute; left: 14px; bottom: 14px;
+  display: flex; flex-direction: column; gap: 4px;
+  background: rgba(22, 17, 13, 0.72); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px;
+  font-size: 0.72rem; color: var(--muted);
+  pointer-events: none;
+}
+.tree-legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.tree-legend .dot-union { background: var(--line-union); }
+.tree-legend .dot-child { background: var(--line-child); }
+
 .tree-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--muted); text-align: center; padding: 20px; }
 .hidden { display: none !important; }
 
-.tree-box { fill: var(--surface-2); stroke: var(--border); stroke-width: 1.5; }
 .tree-node { cursor: pointer; }
-.tree-node:hover .tree-box { stroke: var(--accent); }
-.tree-node.is-root .tree-box { fill: #33261a; stroke: var(--accent); stroke-width: 2; }
-.tree-node.sexe-H .tree-box { stroke: var(--male); }
-.tree-node.sexe-F .tree-box { stroke: var(--female); }
-.tree-node.is-root .tree-box { stroke: var(--accent); }
-.tree-name { fill: var(--text); font-size: 14px; text-anchor: middle; font-weight: 600; }
-.tree-years { fill: var(--muted); font-size: 11px; text-anchor: middle; }
-.tree-spouse { fill: var(--accent-strong); font-size: 10px; text-anchor: middle; }
-.tree-edge { fill: none; stroke: var(--border); stroke-width: 1.5; }
+.tree-avatar { fill: var(--surface-2); stroke: var(--border); stroke-width: 2; }
+.tree-initials { fill: var(--muted); font-size: 15px; font-weight: 700; text-anchor: middle; }
+.tree-node:hover .tree-avatar { stroke: var(--accent); }
+.tree-node.is-root .tree-avatar { fill: #33261a; stroke: var(--accent); stroke-width: 3; }
+.tree-node.is-root .tree-initials { fill: var(--accent-strong); }
+.tree-node.sexe-H .tree-avatar { stroke: var(--male); }
+.tree-node.sexe-F .tree-avatar { stroke: var(--female); }
+.tree-node.is-spouse .tree-avatar { stroke-dasharray: 3 3; }
+.tree-node.is-root .tree-avatar { stroke: var(--accent); stroke-dasharray: none; }
+.tree-name { fill: var(--text); font-size: 13px; text-anchor: middle; font-weight: 600; }
+.tree-years { fill: var(--muted); font-size: 10.5px; text-anchor: middle; }
+
+.tree-dot { fill: var(--line-union); stroke: var(--bg); stroke-width: 1.5; }
+.tree-edge { fill: none; stroke-width: 2; }
+.tree-edge-union { stroke: var(--line-union); }
+.tree-edge-child { stroke: var(--line-child); }
 
 /* --- Liste des personnes --- */
 .list-toolbar { padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--surface); flex: 0 0 auto; }
@@ -146,7 +169,15 @@ input[type="search"], input[type="text"], select, textarea {
 .muted { color: var(--muted); }
 
 /* --- Bottom nav --- */
-.bottombar { display: flex; border-top: 1px solid var(--border); background: var(--surface); flex: 0 0 auto; }
+.bottombar {
+  display: flex;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  flex: 0 0 auto;
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
 .bottombar button {
   flex: 1; background: none; border: none; color: var(--muted);
   padding: 8px 4px 10px; display: flex; flex-direction: column; align-items: center; gap: 2px;
