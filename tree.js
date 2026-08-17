@@ -5,13 +5,13 @@
 (function (global) {
   'use strict';
 
-  var R = 30;          // rayon des cercles-personnes
+  var R = 34;          // rayon des cercles-personnes
   var DOT_R = 6;        // rayon du point d'union
-  var COL_W = 220;       // ascendants : largeur d'une colonne (une génération)
-  var ROW_UNIT = 110;     // ascendants : hauteur réservée par personne
-  var UNIT_W = 220;      // descendants : largeur réservée par personne (branche)
-  var GEN_H = 170;       // descendants : hauteur entre deux générations
-  var SPOUSE_DX = 106;    // descendants : décalage horizontal conjoint
+  var COL_W = 230;       // ascendants : largeur d'une colonne (une génération)
+  var ROW_UNIT = 124;     // ascendants : hauteur réservée par personne
+  var UNIT_W = 230;      // descendants : largeur réservée par personne (branche)
+  var GEN_H = 190;       // descendants : hauteur entre deux générations
+  var SPOUSE_DX = 112;    // descendants : décalage horizontal conjoint
 
   function svgEl(tag, attrs) {
     var el = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -37,23 +37,60 @@
     group.appendChild(svgEl('circle', { class: 'tree-dot', cx: x, cy: y, r: DOT_R }));
   }
 
-  function drawPerson(group, id, p, cx, cy, opts, isRoot, isSpouse) {
+  function approxTextWidth(str, fs) { return (str || '').length * fs * 0.58; }
+
+  function drawPerson(group, id, p, cx, cy, opts, isRoot, isSpouse, hasHidden) {
     var cls = 'tree-node sexe-' + (p.sexe || '?');
     if (isRoot) cls += ' is-root';
     if (isSpouse) cls += ' is-spouse';
+    if (hasHidden) cls += ' has-hidden';
     var g = svgEl('g', { class: cls, transform: 'translate(' + cx + ',' + cy + ')' });
+
+    // Pastille + initiales
     g.appendChild(svgEl('circle', { class: 'tree-avatar', r: R }));
     var initEl = svgEl('text', { class: 'tree-initials', 'text-anchor': 'middle', dy: '0.34em' });
     initEl.textContent = initials(p);
     g.appendChild(initEl);
+
+    // Nom (agrandi) sur un bandeau pour rester lisible sur le fond sombre
     var info = label(p);
-    var nameEl = svgEl('text', { class: 'tree-name', 'text-anchor': 'middle', y: R + 18 });
-    nameEl.textContent = info.name;
-    var yearsEl = svgEl('text', { class: 'tree-years', 'text-anchor': 'middle', y: R + 33 });
-    yearsEl.textContent = info.years;
+    var dispName = info.name.length > 24 ? info.name.slice(0, 23) + '…' : info.name;
+    var nameFs = 16;
+    var nameW = Math.max(approxTextWidth(dispName, nameFs) + 18, R * 1.6);
+    var nameY = R + 10;
+    g.appendChild(svgEl('rect', { class: 'tree-name-bg', x: -nameW / 2, y: nameY, width: nameW, height: 23, rx: 11 }));
+    var nameEl = svgEl('text', { class: 'tree-name', 'text-anchor': 'middle', y: nameY + 16 });
+    nameEl.textContent = dispName;
     g.appendChild(nameEl);
-    g.appendChild(yearsEl);
+    if (info.years) {
+      var yearsEl = svgEl('text', { class: 'tree-years', 'text-anchor': 'middle', y: nameY + 36 });
+      yearsEl.textContent = info.years;
+      g.appendChild(yearsEl);
+    }
+
+    // Clic sur la pastille = recentrer l'arbre ici (dérouler cette branche)
     g.addEventListener('click', function () { if (opts.onSelect) opts.onSelect(id); });
+
+    // Bouton « i » : ouvrir la fiche détaillée sans recentrer
+    var ib = svgEl('g', { class: 'tree-info-btn', transform: 'translate(' + (R * 0.72) + ',' + (-R * 0.72) + ')' });
+    ib.appendChild(svgEl('circle', { r: 10 }));
+    var ig = svgEl('text', { class: 'tree-info-glyph', 'text-anchor': 'middle', dy: '0.35em' });
+    ig.textContent = 'i';
+    ib.appendChild(ig);
+    ib.addEventListener('click', function (e) { e.stopPropagation(); if (opts.onOpen) opts.onOpen(id); });
+    g.appendChild(ib);
+
+    // Badge « + » quand des parents/enfants existent mais ne sont pas affichés
+    if (hasHidden) {
+      var bp = opts.mode === 'descendants' ? { x: 0, y: R } : { x: R, y: 0 };
+      var eb = svgEl('g', { class: 'tree-expand-btn', transform: 'translate(' + bp.x + ',' + bp.y + ')' });
+      eb.appendChild(svgEl('circle', { r: 9 }));
+      var eg = svgEl('text', { class: 'tree-expand-glyph', 'text-anchor': 'middle', dy: '0.35em' });
+      eg.textContent = '+';
+      eb.appendChild(eg);
+      eb.addEventListener('click', function (e) { e.stopPropagation(); if (opts.onSelect) opts.onSelect(id); });
+      g.appendChild(eb);
+    }
     group.appendChild(g);
   }
 
@@ -88,11 +125,13 @@
     };
   }
 
-  function renderAncestors(nodesGroup, edgesGroup, state, data, rootId, opts) {
+  function renderAncestors(nodesGroup, edgesGroup, state, data, rootId, opts, maxGen) {
     data.nodes.forEach(function (n) {
       var p = state.persons[n.id];
       if (!p) return;
-      drawPerson(nodesGroup, n.id, p, n.cx, n.cy, opts, n.id === rootId, false);
+      var parents = p.parentIds || [];
+      var hasHidden = n.gen === maxGen && !!(parents[0] || parents[1]);
+      drawPerson(nodesGroup, n.id, p, n.cx, n.cy, opts, n.id === rootId, false, hasHidden);
     });
 
     for (var gen = 1; gen <= data.maxGen; gen++) {
@@ -185,7 +224,7 @@
     };
   }
 
-  function renderDescendants(nodesGroup, edgesGroup, state, data, rootId, opts) {
+  function renderDescendants(nodesGroup, edgesGroup, state, data, rootId, opts, maxGen) {
     var byId = {};
     data.nodes.forEach(function (n) { byId[n.id] = n; });
 
@@ -222,11 +261,12 @@
           d: 'M ' + (n.cx + R) + ' ' + n.cy + ' H ' + (n.cx + SPOUSE_DX - R)
         }));
         drawDot(edgesGroup, up.x, up.y);
-        drawPerson(nodesGroup, up.spouse.id, up.spouse, n.cx + SPOUSE_DX, n.cy, opts, false, true);
+        drawPerson(nodesGroup, up.spouse.id, up.spouse, n.cx + SPOUSE_DX, n.cy, opts, false, true, false);
       } else if (Store.getChildren(state, n.id).length) {
         drawDot(edgesGroup, up.x, up.y);
       }
-      drawPerson(nodesGroup, n.id, p, n.cx, n.cy, opts, n.id === rootId, false);
+      var hasHidden = n.gen === maxGen && Store.getChildren(state, n.id).length > 0;
+      drawPerson(nodesGroup, n.id, p, n.cx, n.cy, opts, n.id === rootId, false, hasHidden);
     });
   }
 
@@ -303,10 +343,10 @@
     var data, box;
     if (mode === 'descendants') {
       data = buildDescendants(state, rootId, maxGen);
-      renderDescendants(nodesGroup, edgesGroup, state, data, rootId, opts);
+      renderDescendants(nodesGroup, edgesGroup, state, data, rootId, opts, maxGen);
     } else {
       data = buildAncestors(state, rootId, maxGen);
-      renderAncestors(nodesGroup, edgesGroup, state, data, rootId, opts);
+      renderAncestors(nodesGroup, edgesGroup, state, data, rootId, opts, maxGen);
     }
     box = { width: Math.max(data.width, R * 2), height: Math.max(data.height, R * 2) };
 

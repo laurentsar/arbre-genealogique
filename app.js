@@ -88,7 +88,15 @@
     }
     if (!state.rootId || !state.persons[state.rootId]) state.rootId = Object.keys(state.persons)[0];
     treeRootName.textContent = Store.fullName(state.persons[state.rootId]);
-    panZoomCtl = Tree.render(treeSvg, state, { rootId: state.rootId, mode: treeMode, maxGen: maxGen, onSelect: openDetail });
+    panZoomCtl = Tree.render(treeSvg, state, { rootId: state.rootId, mode: treeMode, maxGen: maxGen, onSelect: focusPerson, onOpen: openDetail });
+  }
+
+  // Recentre l'arbre sur une personne (clic sur une pastille = dérouler sa branche).
+  function focusPerson(id) {
+    if (!state.persons[id]) return;
+    state.rootId = id;
+    Store.save(state);
+    refreshAll();
   }
 
   function renderList() {

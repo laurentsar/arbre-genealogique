@@ -110,17 +110,34 @@ button, input, select, textarea { font-family: inherit; }
 .hidden { display: none !important; }
 
 .tree-node { cursor: pointer; }
-.tree-avatar { fill: var(--surface-2); stroke: var(--border); stroke-width: 2; }
-.tree-initials { fill: var(--muted); font-size: 15px; font-weight: 700; text-anchor: middle; }
-.tree-node:hover .tree-avatar { stroke: var(--accent); }
-.tree-node.is-root .tree-avatar { fill: #33261a; stroke: var(--accent); stroke-width: 3; }
+.tree-avatar { fill: var(--surface-2); stroke: var(--border); stroke-width: 2.5; }
+.tree-initials { fill: var(--text); font-size: 18px; font-weight: 800; text-anchor: middle; letter-spacing: 0.5px; }
+.tree-node:hover .tree-avatar { stroke: var(--accent); stroke-width: 3; }
+/* Teinte de fond par sexe = personne repérable d'un coup d'œil */
+.tree-node.sexe-H .tree-avatar { fill: #20303c; stroke: var(--male); }
+.tree-node.sexe-F .tree-avatar { fill: #382632; stroke: var(--female); }
+.tree-node.is-spouse .tree-avatar { stroke-dasharray: 4 3; }
+.tree-node.is-root .tree-avatar { fill: #3a2a19; stroke: var(--accent-strong); stroke-width: 3.5; stroke-dasharray: none; }
 .tree-node.is-root .tree-initials { fill: var(--accent-strong); }
-.tree-node.sexe-H .tree-avatar { stroke: var(--male); }
-.tree-node.sexe-F .tree-avatar { stroke: var(--female); }
-.tree-node.is-spouse .tree-avatar { stroke-dasharray: 3 3; }
-.tree-node.is-root .tree-avatar { stroke: var(--accent); stroke-dasharray: none; }
-.tree-name { fill: var(--text); font-size: 13px; text-anchor: middle; font-weight: 600; }
-.tree-years { fill: var(--muted); font-size: 10.5px; text-anchor: middle; }
+
+/* Nom lisible : agrandi + bandeau semi-opaque sous la pastille */
+.tree-name-bg { fill: rgba(16, 12, 9, 0.92); stroke: var(--border); stroke-width: 1; }
+.tree-node.is-root .tree-name-bg { stroke: var(--accent); }
+.tree-name { fill: var(--text); font-size: 16px; text-anchor: middle; font-weight: 700; }
+.tree-years { fill: #d8c8b4; font-size: 12px; text-anchor: middle; }
+
+/* Bouton « i » (ouvrir la fiche) */
+.tree-info-btn { cursor: pointer; }
+.tree-info-btn circle { fill: var(--surface); stroke: var(--accent); stroke-width: 1.5; }
+.tree-info-btn:hover circle { fill: var(--accent); }
+.tree-info-glyph { fill: var(--accent-strong); font-size: 12px; font-weight: 700; font-style: italic; }
+.tree-info-btn:hover .tree-info-glyph { fill: #1c1410; }
+
+/* Badge « + » : d'autres parents/enfants existent hors écran */
+.tree-expand-btn { cursor: pointer; }
+.tree-expand-btn circle { fill: var(--accent); stroke: var(--bg); stroke-width: 1.5; }
+.tree-expand-btn:hover circle { fill: var(--accent-strong); }
+.tree-expand-glyph { fill: #1c1410; font-size: 13px; font-weight: 800; }
 
 .tree-dot { fill: var(--line-union); stroke: var(--bg); stroke-width: 1.5; }
 .tree-edge { fill: none; stroke-width: 2; }

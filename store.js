@@ -30,15 +30,37 @@
   }
 
   var saveTimer = null;
+  var pendingState = null;
+  function writeNow(state) {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(state));
+    } catch (e) {
+      console.error('Sauvegarde impossible', e);
+    }
+  }
   function save(state) {
+    pendingState = state;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(function () {
-      try {
-        localStorage.setItem(KEY, JSON.stringify(state));
-      } catch (e) {
-        console.error('Sauvegarde impossible', e);
-      }
+      saveTimer = null;
+      writeNow(pendingState);
+      pendingState = null;
     }, 150);
+  }
+  // Écrit immédiatement une éventuelle sauvegarde en attente. Indispensable
+  // avant fermeture/mise en arrière-plan : sur mobile/PWA la page peut être
+  // suspendue avant le déclenchement du timer différé (→ perte de la dernière
+  // modification). Appelé sur pagehide/visibilitychange/beforeunload.
+  function flush() {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    if (pendingState) { writeNow(pendingState); pendingState = null; }
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') flush();
+    });
   }
 
   function newPerson(fields) {
@@ -380,6 +402,7 @@
     emptyState: emptyState,
     load: load,
     save: save,
+    flush: flush,
     addPerson: addPerson,
     updatePerson: updatePerson,
     deletePerson: deletePerson,
