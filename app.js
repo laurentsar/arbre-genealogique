@@ -455,11 +455,7 @@
     reader.onload = function () {
       try {
         var imported = Gedcom.parseGEDCOM(reader.result);
-        if (confirm('Remplacer les données actuelles par ce fichier GEDCOM ? Cette action est irréversible.')) {
-          state = imported;
-          Store.save(state);
-          refreshAll();
-        }
+        openGedcomImportChoice(imported);
       } catch (err) {
         alert('Fichier invalide : ' + err.message);
       }
@@ -467,6 +463,53 @@
     reader.readAsText(file);
     e.target.value = '';
   });
+
+  function openGedcomImportChoice(imported) {
+    var dlg = $('#gedcomImportDialog');
+    var nPersons = Object.keys(imported.persons).length;
+    var nUnions = Object.keys(imported.unions).length;
+    var hasExisting = Object.keys(state.persons).length > 0;
+    $('#gedcomImportSummary').textContent =
+      'Fichier : ' + nPersons + ' personne(s), ' + nUnions + ' union(s).' +
+      (hasExisting ? ' Vos données actuelles contiennent ' + Object.keys(state.persons).length + ' personne(s).' : '');
+
+    var btnMerge = $('#btnGedcomMerge');
+    var btnReplace = $('#btnGedcomReplace');
+    var btnCancel = $('#btnGedcomCancel');
+    btnMerge.style.display = hasExisting ? '' : 'none';
+
+    function onMerge() {
+      var stats = Store.mergeGedcom(state, imported);
+      dlg.close();
+      refreshAll();
+      var msg = 'Fusion terminée : ' + stats.matched + ' personne(s) rapprochée(s) et complétée(s), ' +
+        stats.added + ' nouvelle(s) personne(s) ajoutée(s), ' + stats.unions + ' union(s) traitée(s).';
+      if (stats.conflicts) {
+        msg += '\n' + stats.conflicts + ' lien(s) parent-enfant ignoré(s) car la personne avait déjà 2 parents différents (à vérifier manuellement).';
+      }
+      alert(msg);
+    }
+    function onReplace() {
+      if (!confirm('Remplacer les données actuelles par ce fichier GEDCOM ? Cette action est irréversible.')) return;
+      state = imported;
+      Store.save(state);
+      dlg.close();
+      refreshAll();
+    }
+    function onCancel() { dlg.close(); }
+    function onClose() { cleanup(); }
+    function cleanup() {
+      btnMerge.removeEventListener('click', onMerge);
+      btnReplace.removeEventListener('click', onReplace);
+      btnCancel.removeEventListener('click', onCancel);
+      dlg.removeEventListener('close', onClose);
+    }
+    btnMerge.addEventListener('click', onMerge);
+    btnReplace.addEventListener('click', onReplace);
+    btnCancel.addEventListener('click', onCancel);
+    dlg.addEventListener('close', onClose);
+    dlg.showModal();
+  }
 
   $('#btnReset').addEventListener('click', function () {
     if (confirm('Supprimer toutes les personnes et unions de cet appareil ? Cette action est irréversible.')) {
