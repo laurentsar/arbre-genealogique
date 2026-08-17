@@ -260,6 +260,111 @@
     }).sort(function (a, b) { return fullName(a).localeCompare(fullName(b)); });
   }
 
+  // --- Fusion de deux arbres (ex. deux exports GEDCOM de logiciels différents) ---
+  // Rapproche les personnes par nom + année de naissance (à défaut, par nom seul
+  // si sans ambiguïté). Ne supprime ni n'écrase jamais une donnée existante :
+  // complète seulement les champs vides et ajoute les personnes/unions inconnues.
+
+  function stripAccents(s) {
+    return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+  }
+
+  function normalizeName(s) {
+    return stripAccents(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  }
+
+  function birthYear(p) {
+    var m = p.naissance && p.naissance.date ? /(\d{4})/.exec(p.naissance.date) : null;
+    return m ? m[1] : '';
+  }
+
+  function personKey(p) {
+    return { name: normalizeName((p.prenom || '') + ' ' + (p.nom || '')), year: birthYear(p) };
+  }
+
+  function fillBlank(existing, field, value) {
+    if (!existing[field] && value) existing[field] = value;
+  }
+
+  function mergeGedcom(state, incoming) {
+    var idMap = {};
+    var stats = { matched: 0, added: 0, unions: 0, conflicts: 0 };
+
+    var byNameYear = {};
+    var byNameOnly = {};
+    Object.keys(state.persons).forEach(function (id) {
+      var k = personKey(state.persons[id]);
+      if (k.year) (byNameYear[k.name + '|' + k.year] = byNameYear[k.name + '|' + k.year] || []).push(id);
+      (byNameOnly[k.name] = byNameOnly[k.name] || []).push(id);
+    });
+
+    Object.keys(incoming.persons).forEach(function (iid) {
+      var ip = incoming.persons[iid];
+      var k = personKey(ip);
+      var matchId = null;
+      if (k.year) {
+        var withYear = byNameYear[k.name + '|' + k.year];
+        if (withYear && withYear.length === 1) matchId = withYear[0];
+      }
+      if (!matchId) {
+        var byName = byNameOnly[k.name];
+        if (byName && byName.length === 1) matchId = byName[0];
+      }
+      if (matchId) {
+        var existing = state.persons[matchId];
+        fillBlank(existing, 'prenom', ip.prenom);
+        fillBlank(existing, 'nom', ip.nom);
+        if (existing.sexe === '?' && ip.sexe && ip.sexe !== '?') existing.sexe = ip.sexe;
+        fillBlank(existing.naissance, 'date', ip.naissance && ip.naissance.date);
+        fillBlank(existing.naissance, 'lieu', ip.naissance && ip.naissance.lieu);
+        fillBlank(existing.deces, 'date', ip.deces && ip.deces.date);
+        fillBlank(existing.deces, 'lieu', ip.deces && ip.deces.lieu);
+        if (!existing.decede && ip.decede) existing.decede = true;
+        if (ip.notes && existing.notes.indexOf(ip.notes) === -1) {
+          existing.notes = existing.notes ? existing.notes + '\n' + ip.notes : ip.notes;
+        }
+        idMap[iid] = matchId;
+        stats.matched++;
+      } else {
+        var created = addPerson(state, {
+          prenom: ip.prenom, nom: ip.nom, sexe: ip.sexe,
+          naissance: { date: ip.naissance ? ip.naissance.date : '', lieu: ip.naissance ? ip.naissance.lieu : '' },
+          deces: { date: ip.deces ? ip.deces.date : '', lieu: ip.deces ? ip.deces.lieu : '' },
+          decede: !!ip.decede, notes: ip.notes || ''
+        });
+        idMap[iid] = created.id;
+        stats.added++;
+      }
+    });
+
+    Object.keys(incoming.unions).forEach(function (uidKey) {
+      var u = incoming.unions[uidKey];
+      var partnerIds = u.partnerIds.map(function (pid) { return idMap[pid]; }).filter(Boolean);
+      if (!partnerIds.length) return;
+      var union = findOrCreateUnion(state, partnerIds);
+      fillBlank(union, 'dateDebut', u.dateDebut);
+      fillBlank(union, 'lieuDebut', u.lieuDebut);
+      (u.childIds || []).forEach(function (cid) {
+        var mapped = idMap[cid];
+        if (!mapped) return;
+        var child = state.persons[mapped];
+        var existingParents = child.parentIds || [];
+        var newParents = partnerIds.filter(function (pid) { return existingParents.indexOf(pid) === -1; });
+        if (existingParents.length + newParents.length > 2) {
+          // Cet enfant a déjà 2 parents différents ailleurs : on ne relie pas cette
+          // union comme filiation pour éviter de fausser l'arbre (conflit de source).
+          stats.conflicts++;
+          return;
+        }
+        addChildToUnion(state, union.id, mapped);
+      });
+      stats.unions++;
+    });
+
+    save(state);
+    return stats;
+  }
+
   function exportJSON(state) {
     return JSON.stringify(state, null, 2);
   }
@@ -284,6 +389,7 @@
     addChildToUnion: addChildToUnion,
     removeChildFromUnion: removeChildFromUnion,
     setParent: setParent,
+    mergeGedcom: mergeGedcom,
     getParents: getParents,
     getUnions: getUnions,
     getSpouses: getSpouses,

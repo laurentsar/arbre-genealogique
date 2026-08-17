@@ -87,7 +87,7 @@
 
     <div class="settings-card">
       <h2>Format GEDCOM</h2>
-      <p class="muted">Standard d'échange généalogique, compatible avec d'autres logiciels (Geneanet, Heredis, Gramps…).</p>
+      <p class="muted">Standard d'échange généalogique, compatible avec d'autres logiciels (Geneanet, Heredis, Gramps, MyHeritage…). L'import propose de fusionner avec les données actuelles ou de tout remplacer.</p>
       <div class="btn-row">
         <button id="btnExportGedcom" class="btn">Exporter (.ged)</button>
         <label class="btn btn-file">Importer (.ged)<input id="importGedcomInput" type="file" accept=".ged" hidden></label>
@@ -150,6 +150,17 @@
   <div class="dialog-actions">
     <button type="button" id="pickerNew" class="btn btn-accent">+ Nouvelle personne</button>
     <button type="button" id="pickerCancel" class="btn btn-ghost">Annuler</button>
+  </div>
+</dialog>
+
+<dialog id="gedcomImportDialog" class="app-dialog">
+  <h2>Importer ce fichier GEDCOM</h2>
+  <p id="gedcomImportSummary" class="muted"></p>
+  <p class="muted">« Fusionner » rapproche les personnes par nom + année de naissance, complète les fiches existantes et ajoute les nouvelles — rien n'est supprimé. « Remplacer » efface les données actuelles pour les remplacer par ce fichier.</p>
+  <div class="dialog-actions">
+    <button type="button" id="btnGedcomCancel" class="btn btn-ghost">Annuler</button>
+    <button type="button" id="btnGedcomReplace" class="btn btn-danger">Remplacer tout</button>
+    <button type="button" id="btnGedcomMerge" class="btn btn-accent">Fusionner</button>
   </div>
 </dialog>
 
