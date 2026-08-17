@@ -16,7 +16,24 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        debug {
+            // Keystore de debug fixe et versionné (pas un secret : clé de debug
+            // Android standard) pour que chaque APK debug généré, en local comme
+            // en CI, ait toujours la même signature. Sinon Android refuse
+            // d'installer une nouvelle release par-dessus l'ancienne
+            // (« package en conflit avec un package déjà présent »), car chaque
+            // exécution CI générait sinon un nouveau debug.keystore aléatoire.
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
