@@ -97,29 +97,43 @@
       return;
     }
     if (!state.rootId || !state.persons[state.rootId]) state.rootId = Object.keys(state.persons)[0];
-    treeRootName.textContent = Store.fullName(state.persons[state.rootId]);
-    panZoomCtl = Tree.render(treeSvg, state, { rootId: state.rootId, mode: treeMode, maxGen: maxGen, onSelect: focusPerson, onOpen: openDetail });
+    var cr = currentRoot();
+    treeRootName.textContent = Store.fullName(state.persons[cr]) +
+      (cr !== state.rootId ? ' (racine : ' + Store.fullName(state.persons[state.rootId]) + ')' : '');
+    panZoomCtl = Tree.render(treeSvg, state, { rootId: cr, mode: treeMode, maxGen: maxGen, onSelect: focusPerson, onOpen: openDetail });
+    updateNav();
   }
 
-  // Navigation dans l'arbre : historique des personnes sur lesquelles on s'est
-  // centré, pour un bouton « Retour » (le clic sur une pastille recentrant sans
-  // moyen de revenir n'était pas pratique).
+  // NAVIGATION vs RACINE.
+  //
+  // `state.rootId` = la PERSONNE RACINE (point d'ancrage, PERSISTÉE, définie dans
+  // Réglages ou via « Définir comme racine »). Elle ne change PAS quand on
+  // explore l'arbre. `viewRoot` = le centre d'affichage COURANT (navigation,
+  // transitoire, non sauvegardé) : cliquer une pastille déplace la vue sans
+  // perdre la racine. On revient à la racine d'un bouton 🏠, et à la personne
+  // précédente d'un bouton Retour.
+  var viewRoot = null;
   var rootHistory = [];
 
-  function updateBackBtn() {
-    var b = $('#btnTreeBack');
-    if (b) b.disabled = rootHistory.length === 0;
+  function currentRoot() {
+    return (viewRoot && state.persons[viewRoot]) ? viewRoot : state.rootId;
   }
 
-  // Change la personne centrale. `record !== false` empile l'ancienne racine
-  // dans l'historique (pour pouvoir revenir).
-  function setRoot(id, record) {
+  function updateNav() {
+    var back = $('#btnTreeBack');
+    if (back) back.disabled = rootHistory.length === 0;
+    var home = $('#btnTreeHome');
+    if (home) home.disabled = !state.rootId || currentRoot() === state.rootId;
+  }
+
+  // Déplacer la VUE (navigation) sans toucher à la racine persistée.
+  function navigateTo(id) {
     if (!state.persons[id]) return;
-    if (record !== false && state.rootId && state.rootId !== id) rootHistory.push(state.rootId);
-    state.rootId = id;
-    Store.save(state);
-    updateBackBtn();
-    refreshAll();
+    var cur = currentRoot();
+    if (cur && cur !== id) rootHistory.push(cur);
+    viewRoot = id;
+    updateNav();
+    renderTree();
   }
 
   function goBackRoot() {
@@ -129,12 +143,33 @@
       if (state.persons[prev]) break;
       prev = null;
     }
-    if (prev) { state.rootId = prev; Store.save(state); updateBackBtn(); refreshAll(); }
+    if (prev) { viewRoot = prev; updateNav(); renderTree(); }
   }
 
-  // Recentre l'arbre sur une personne (clic sur une pastille = dérouler sa branche).
+  // Revenir à la PERSONNE RACINE (le point de départ).
+  function goHome() {
+    if (!state.rootId || !state.persons[state.rootId]) return;
+    var cur = currentRoot();
+    if (cur !== state.rootId) rootHistory.push(cur);
+    viewRoot = state.rootId;
+    updateNav();
+    renderTree();
+  }
+
+  // Définir la PERSONNE RACINE (persistée) et s'y placer.
+  function setHome(id) {
+    if (!state.persons[id]) return;
+    state.rootId = id;
+    viewRoot = id;
+    rootHistory = [];
+    Store.save(state);
+    updateNav();
+    refreshAll();
+  }
+
+  // Clic sur une pastille = explorer cette branche (navigation).
   function focusPerson(id) {
-    setRoot(id);
+    navigateTo(id);
   }
 
   function renderList() {
@@ -349,7 +384,8 @@
       '<button class="btn" data-act="edit">Modifier</button>' +
       '<button class="btn" data-act="complete-online">🔎 Compléter en ligne</button>' +
       '<button class="btn" data-act="find-duplicates">🔗 Doublons locaux</button>' +
-      '<button class="btn" data-act="root">Centrer l’arbre ici</button>' +
+      '<button class="btn" data-act="center">Centrer la vue ici</button>' +
+      '<button class="btn" data-act="set-home">🏠 Définir comme racine</button>' +
       '<button class="btn btn-danger" data-act="delete">Supprimer</button>' +
       '</div>';
 
@@ -461,8 +497,10 @@
     if (!p) return;
     if (act === 'edit') {
       openPersonForm(p).then(function (updated) { if (updated) { renderDetail(personId); refreshAll(); proposeMatch(personId); } });
-    } else if (act === 'root') {
-      closeDetail(); setRoot(personId);
+    } else if (act === 'center') {
+      closeDetail(); navigateTo(personId);
+    } else if (act === 'set-home') {
+      closeDetail(); setHome(personId);
     } else if (act === 'delete') {
       if (confirm('Supprimer ' + Store.fullName(p) + ' ? Cette action retire aussi ses liens de parenté.')) {
         Store.deletePerson(state, personId);
@@ -521,14 +559,16 @@
   });
 
   $('#btnChangeRoot').addEventListener('click', function () {
-    pickPerson({ title: 'Centrer l’arbre sur…', allowNew: false }).then(function (res) {
+    pickPerson({ title: 'Aller à…', allowNew: false }).then(function (res) {
       if (!res) return;
-      setRoot(res.id);
+      navigateTo(res.id);
     });
   });
 
   var backBtn = $('#btnTreeBack');
   if (backBtn) backBtn.addEventListener('click', goBackRoot);
+  var homeBtn = $('#btnTreeHome');
+  if (homeBtn) homeBtn.addEventListener('click', goHome);
 
   $('#btnZoomIn').addEventListener('click', function () { if (panZoomCtl) panZoomCtl.zoomIn(); });
   $('#btnZoomOut').addEventListener('click', function () { if (panZoomCtl) panZoomCtl.zoomOut(); });
@@ -542,7 +582,7 @@
 
   searchInput.addEventListener('input', renderList);
   rootSelect.addEventListener('change', function () {
-    setRoot(rootSelect.value);
+    setHome(rootSelect.value);
   });
 
   // --- Réglages : sauvegarde / GEDCOM / réinitialisation -----------------
@@ -779,6 +819,8 @@
         });
       }
       state.rootId = main.id;
+      viewRoot = main.id;
+      rootHistory = [];
       Store.save(state);
       refreshAll();
       wtBusy(false);
@@ -871,7 +913,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.2';
+  var APP_VERSION = '1.4.3';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
