@@ -94,3 +94,5 @@ jobs:
           files: arbre-genealogique-${{ steps.version.outputs.version }}.apk
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+# build signé via keystore stable (secrets ANDROID_KEYSTORE_B64 / _PASSWORD)
