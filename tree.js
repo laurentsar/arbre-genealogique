@@ -54,12 +54,12 @@
 
     // Nom (agrandi) sur un bandeau pour rester lisible sur le fond sombre
     var info = label(p);
-    var dispName = info.name.length > 24 ? info.name.slice(0, 23) + '…' : info.name;
-    var nameFs = 16;
-    var nameW = Math.max(approxTextWidth(dispName, nameFs) + 18, R * 1.6);
+    var dispName = info.name.length > 26 ? info.name.slice(0, 25) + '…' : info.name;
+    var nameFs = 18;
+    var nameW = Math.max(approxTextWidth(dispName, nameFs) + 20, R * 1.8);
     var nameY = R + 10;
-    g.appendChild(svgEl('rect', { class: 'tree-name-bg', x: -nameW / 2, y: nameY, width: nameW, height: 23, rx: 11 }));
-    var nameEl = svgEl('text', { class: 'tree-name', 'text-anchor': 'middle', y: nameY + 16 });
+    g.appendChild(svgEl('rect', { class: 'tree-name-bg', x: -nameW / 2, y: nameY, width: nameW, height: 26, rx: 12 }));
+    var nameEl = svgEl('text', { class: 'tree-name', 'text-anchor': 'middle', y: nameY + 18 });
     nameEl.textContent = dispName;
     g.appendChild(nameEl);
     if (info.years) {
@@ -97,31 +97,45 @@
   // --- Ascendants (numérotation d'Ahnentafel : 1=racine, 2n=père, 2n+1=mère) ---
 
   function buildAncestors(state, rootId, maxGen) {
+    // Layout COMPACT : au lieu de réserver 2^génération lignes (grille
+    // d'Ahnentafel pleine, vide à 99 % dès qu'il manque des ancêtres, ce qui
+    // forçait un dézoom illisible), on empile seulement les ancêtres RÉELS.
+    // Chaque feuille prend une ligne ; chaque personne est centrée verticalement
+    // sur ses parents. Résultat : aucune place perdue, texte lisible.
     var nodes = [];
     var byKey = {};
-    function rec(id, gen, slot) {
-      if (!id || gen > maxGen) return;
-      var n = { id: id, gen: gen, slot: slot };
+    var leafCursor = 0;
+    // `path` = ancêtres déjà présents sur la lignée en cours. Empêche une boucle
+    // (une personne désignée comme son propre ancêtre) de se dérouler à l'infini
+    // dans la limite des générations : on dessine la personne mais on ne remonte
+    // pas au-dessus d'elle une seconde fois.
+    function rec(id, gen, slot, path) {
+      if (!id || gen > maxGen) return null;
+      var p = state.persons[id];
+      var n = { id: id, gen: gen, slot: slot, cx: gen * COL_W + R };
       nodes.push(n);
       byKey[gen + '_' + slot] = n;
-      if (gen === maxGen) return;
-      var p = state.persons[id];
-      if (!p) return;
-      var parents = p.parentIds || [];
-      if (parents[0]) rec(parents[0], gen + 1, slot * 2);
-      if (parents[1]) rec(parents[1], gen + 1, slot * 2 + 1);
+      var cycle = !!path[id];
+      var parents = (gen < maxGen && p && !cycle) ? (p.parentIds || []) : [];
+      path[id] = true;
+      var father = parents[0] ? rec(parents[0], gen + 1, slot * 2, path) : null;
+      var mother = parents[1] ? rec(parents[1], gen + 1, slot * 2 + 1, path) : null;
+      delete path[id];
+      var kids = [father, mother].filter(Boolean);
+      if (!kids.length) {
+        n.cy = (leafCursor + 0.5) * ROW_UNIT;
+        leafCursor += 1;
+      } else {
+        n.cy = kids.reduce(function (s, k) { return s + k.cy; }, 0) / kids.length;
+      }
+      return n;
     }
-    rec(rootId, 0, 0);
+    rec(rootId, 0, 0, {});
     var maxGenSeen = nodes.reduce(function (m, n) { return Math.max(m, n.gen); }, 0);
-    var totalH = Math.pow(2, maxGenSeen) * ROW_UNIT;
-    nodes.forEach(function (n) {
-      var slots = Math.pow(2, n.gen);
-      n.cx = n.gen * COL_W + R;
-      n.cy = (n.slot + 0.5) / slots * totalH;
-    });
+    var height = Math.max(leafCursor, 1) * ROW_UNIT;
     return {
       nodes: nodes, byKey: byKey, maxGen: maxGenSeen,
-      width: (maxGenSeen + 1) * COL_W + R, height: totalH
+      width: (maxGenSeen + 1) * COL_W + R, height: height
     };
   }
 
@@ -179,6 +193,7 @@
 
     function width(id, gen) {
       if (visited[id] || gen >= maxGen) return 1;
+      visited[id] = true;   // déduplique comme assign() : un même individu n'est compté qu'une fois
       var children = Store.getChildren(state, id);
       if (!children.length) return 1;
       var w = 0;
@@ -255,13 +270,21 @@
       var p = state.persons[n.id];
       if (!p) return;
       var up = unionPoint[n.id];
-      if (up.spouse) {
-        edgesGroup.appendChild(svgEl('path', {
-          class: 'tree-edge tree-edge-union',
-          d: 'M ' + (n.cx + R) + ' ' + n.cy + ' H ' + (n.cx + SPOUSE_DX - R)
-        }));
-        drawDot(edgesGroup, up.x, up.y);
-        drawPerson(nodesGroup, up.spouse.id, up.spouse, n.cx + SPOUSE_DX, n.cy, opts, false, true, false);
+      // TOUS les conjoints (remariages inclus) — avant, seul le 1er était affiché,
+      // les autres et leurs enfants apparaissaient sans parent.
+      var spouses = Store.getSpouses(state, n.id);
+      if (spouses.length) {
+        var prevX = n.cx;
+        spouses.forEach(function (sp, i) {
+          var sx = n.cx + SPOUSE_DX + i * (R * 2 + 18);
+          edgesGroup.appendChild(svgEl('path', {
+            class: 'tree-edge tree-edge-union',
+            d: 'M ' + (prevX + R) + ' ' + n.cy + ' H ' + (sx - R)
+          }));
+          drawDot(edgesGroup, (prevX + sx) / 2, n.cy);
+          drawPerson(nodesGroup, sp.id, sp, sx, n.cy, opts, false, true, false);
+          prevX = sx;
+        });
       } else if (Store.getChildren(state, n.id).length) {
         drawDot(edgesGroup, up.x, up.y);
       }
@@ -290,20 +313,65 @@
       apply();
     }
 
+    // Multi-pointeurs : 1 doigt = déplacer, 2 doigts = pincer pour zoomer
+    // (indispensable sur mobile — il n'y avait que la molette et les boutons).
+    var pointers = {};
+    var pinch = null;   // { dist, mx, my } au dernier relevé
+
+    function pointerList() {
+      return Object.keys(pointers).map(function (k) { return pointers[k]; });
+    }
+    function setScaleAround(newScale, mx, my) {
+      newScale = Math.min(Math.max(newScale, 0.1), 3);
+      state.tx = mx - (mx - state.tx) * (newScale / state.scale);
+      state.ty = my - (my - state.ty) * (newScale / state.scale);
+      state.scale = newScale;
+      apply();
+    }
+
     svg.addEventListener('pointerdown', function (e) {
-      state.dragging = true;
-      state.lastX = e.clientX; state.lastY = e.clientY;
+      pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
       svg.setPointerCapture(e.pointerId);
+      var pts = pointerList();
+      if (pts.length === 1) {
+        state.dragging = true;
+        state.lastX = e.clientX; state.lastY = e.clientY;
+      } else if (pts.length === 2) {
+        state.dragging = false;
+        var dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
+        pinch = { dist: Math.hypot(dx, dy) || 1 };
+      }
     });
     svg.addEventListener('pointermove', function (e) {
-      if (!state.dragging) return;
-      state.tx += e.clientX - state.lastX;
-      state.ty += e.clientY - state.lastY;
-      state.lastX = e.clientX; state.lastY = e.clientY;
-      apply();
+      if (!pointers[e.pointerId]) return;
+      pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+      var pts = pointerList();
+      if (pts.length >= 2 && pinch) {
+        var dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
+        var dist = Math.hypot(dx, dy) || 1;
+        var rect = svg.getBoundingClientRect();
+        var mx = (pts[0].x + pts[1].x) / 2 - rect.left;
+        var my = (pts[0].y + pts[1].y) / 2 - rect.top;
+        setScaleAround(state.scale * (dist / pinch.dist), mx, my);
+        pinch.dist = dist;
+      } else if (state.dragging && pts.length === 1) {
+        state.tx += e.clientX - state.lastX;
+        state.ty += e.clientY - state.lastY;
+        state.lastX = e.clientX; state.lastY = e.clientY;
+        apply();
+      }
     });
     ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) {
-      svg.addEventListener(ev, function () { state.dragging = false; });
+      svg.addEventListener(ev, function (e) {
+        delete pointers[e.pointerId];
+        var pts = pointerList();
+        if (pts.length < 2) pinch = null;
+        if (pts.length === 0) state.dragging = false;
+        else if (pts.length === 1) {
+          state.dragging = true;
+          state.lastX = pts[0].x; state.lastY = pts[0].y;
+        }
+      });
     });
     svg.addEventListener('wheel', function (e) {
       e.preventDefault();

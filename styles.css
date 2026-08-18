@@ -124,8 +124,8 @@ button, input, select, textarea { font-family: inherit; }
 /* Nom lisible : agrandi + bandeau semi-opaque sous la pastille */
 .tree-name-bg { fill: rgba(16, 12, 9, 0.92); stroke: var(--border); stroke-width: 1; }
 .tree-node.is-root .tree-name-bg { stroke: var(--accent); }
-.tree-name { fill: var(--text); font-size: 16px; text-anchor: middle; font-weight: 700; }
-.tree-years { fill: #d8c8b4; font-size: 12px; text-anchor: middle; }
+.tree-name { fill: var(--text); font-size: 18px; text-anchor: middle; font-weight: 800; }
+.tree-years { fill: #e0d2bf; font-size: 13px; text-anchor: middle; font-weight: 600; }
 
 /* Bouton « i » (ouvrir la fiche) */
 .tree-info-btn { cursor: pointer; }
@@ -240,6 +240,13 @@ dialog h2 { margin-top: 0; font-size: 1.05rem; }
 }
 .chip:hover { border-color: var(--accent); }
 .chip-add { color: var(--accent-strong); border-style: dashed; }
+.chip-name { cursor: pointer; }
+.chip-x {
+  border: none; background: transparent; color: var(--muted);
+  font-size: 1.05rem; line-height: 1; padding: 0 2px; cursor: pointer;
+  border-radius: 50%;
+}
+.chip-x:hover { color: #fff; background: var(--danger); }
 .detail-notes { white-space: pre-wrap; font-size: 0.9rem; color: var(--text); background: var(--surface-2); border-radius: 8px; padding: 10px; }
 .detail-actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
 

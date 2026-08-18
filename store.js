@@ -186,6 +186,60 @@
     save(state);
   }
 
+  // Détache UN parent d'un enfant (sans supprimer personne). L'enfant reste relié
+  // au parent restant (union solo) s'il y en a un.
+  function removeParent(state, childId, parentId) {
+    var c = state.persons[childId];
+    if (!c) return;
+    Object.keys(state.unions).forEach(function (uidKey) {
+      var u = state.unions[uidKey];
+      if (u.partnerIds.indexOf(parentId) !== -1 && u.childIds.indexOf(childId) !== -1) {
+        u.childIds = u.childIds.filter(function (x) { return x !== childId; });
+        if (u.partnerIds.length === 0 && u.childIds.length === 0) delete state.unions[uidKey];
+      }
+    });
+    c.parentIds = (c.parentIds || []).filter(function (x) { return x !== parentId; });
+    if (c.parentIds.length === 1) {
+      var solo = findOrCreateUnion(state, [c.parentIds[0]]);
+      addChildToUnion(state, solo.id, childId);
+    }
+    save(state);
+  }
+
+  // Détache un conjoint. L'union devient solo si elle a des enfants, sinon elle
+  // disparaît. Les enfants perdent ce parent-là mais gardent l'autre.
+  function unlinkSpouse(state, aId, bId) {
+    Object.keys(state.unions).forEach(function (uidKey) {
+      var u = state.unions[uidKey];
+      if (u.partnerIds.indexOf(aId) !== -1 && u.partnerIds.indexOf(bId) !== -1) {
+        u.partnerIds = u.partnerIds.filter(function (x) { return x !== bId; });
+        var b = state.persons[bId];
+        if (b) b.unionIds = b.unionIds.filter(function (x) { return x !== uidKey; });
+        u.childIds.forEach(function (cid) {
+          var c = state.persons[cid];
+          if (c) c.parentIds = c.parentIds.filter(function (x) { return x !== bId; });
+        });
+        if (u.partnerIds.length === 0 && u.childIds.length === 0) {
+          delete state.unions[uidKey];
+          var a = state.persons[aId];
+          if (a) a.unionIds = a.unionIds.filter(function (x) { return x !== uidKey; });
+        }
+      }
+    });
+    save(state);
+  }
+
+  // Détache un enfant d'un parent (retire l'enfant des unions de ce parent).
+  function unlinkChild(state, parentId, childId) {
+    Object.keys(state.unions).forEach(function (uidKey) {
+      var u = state.unions[uidKey];
+      if (u.partnerIds.indexOf(parentId) !== -1 && u.childIds.indexOf(childId) !== -1) {
+        removeChildFromUnion(state, uidKey, childId);
+      }
+    });
+    save(state);
+  }
+
   function setParent(state, childId, parentId, slot) {
     var c = state.persons[childId];
     if (!c) return;
@@ -308,41 +362,101 @@
     if (!existing[field] && value) existing[field] = value;
   }
 
+  function yearOf(dateStr) {
+    var m = dateStr ? /(\d{4})/.exec(dateStr) : null;
+    return m ? m[1] : '';
+  }
+
+  // Score de rapprochement entre une personne entrante et une personne existante
+  // DE MÊME NOM. Positif = c'est probablement la même ; négatif = probablement
+  // deux personnes différentes (années de naissance/décès qui se contredisent).
+  // `contradiction` = au moins une donnée forte diverge (à ne pas fusionner à la
+  // légère). Compare la date COMPLÈTE quand les deux la portent (bonus fort).
+  function matchScore(ip, ep) {
+    var s = 0, contradiction = false;
+    var iyN = yearOf(ip.naissance && ip.naissance.date), eyN = yearOf(ep.naissance && ep.naissance.date);
+    if (iyN && eyN) {
+      if (iyN === eyN) {
+        s += 3;
+        var idN = ip.naissance.date, edN = ep.naissance.date;
+        if (idN.length > 4 && edN.length > 4 && idN === edN) s += 3; // jour+mois identiques
+      } else { s -= 5; contradiction = true; }
+    }
+    var ipl = normalizeName(ip.naissance && ip.naissance.lieu), epl = normalizeName(ep.naissance && ep.naissance.lieu);
+    if (ipl && epl && ipl === epl) s += 2;
+    var iyD = yearOf(ip.deces && ip.deces.date), eyD = yearOf(ep.deces && ep.deces.date);
+    if (iyD && eyD) {
+      if (iyD === eyD) s += 2;
+      else { s -= 3; contradiction = true; }
+    }
+    return { score: s, contradiction: contradiction };
+  }
+
+  // Complète un champ événement (naissance/décès) et signale un conflit si les
+  // deux côtés portent une valeur DIFFÉRENTE (on garde l'existant, on n'écrase
+  // jamais, mais on le compte pour le rapport).
+  function fillEventField(existing, incoming, field, stats, details, who) {
+    var ev0 = existing[field] || (existing[field] = { date: '', lieu: '' });
+    var iv = incoming[field] || { date: '', lieu: '' };
+    ['date', 'lieu'].forEach(function (f) {
+      if (!iv[f]) return;
+      if (!ev0[f]) ev0[f] = iv[f];
+      else if (ev0[f] !== iv[f]) {
+        stats.conflicts++;
+        if (details.length < 40) {
+          details.push(who + ' — ' + field + ' ' + f + ' : « ' + ev0[f] + ' » vs « ' + iv[f] + ' »');
+        }
+      }
+    });
+  }
+
   function mergeGedcom(state, incoming) {
     var idMap = {};
-    var stats = { matched: 0, added: 0, unions: 0, conflicts: 0 };
+    var stats = { matched: 0, added: 0, unions: 0, conflicts: 0, details: [] };
 
-    var byNameYear = {};
-    var byNameOnly = {};
+    // Index des personnes existantes par nom normalisé (plusieurs par nom possible).
+    var byName = {};
     Object.keys(state.persons).forEach(function (id) {
-      var k = personKey(state.persons[id]);
-      if (k.year) (byNameYear[k.name + '|' + k.year] = byNameYear[k.name + '|' + k.year] || []).push(id);
-      (byNameOnly[k.name] = byNameOnly[k.name] || []).push(id);
+      var name = personKey(state.persons[id]).name;
+      (byName[name] = byName[name] || []).push(id);
     });
 
     Object.keys(incoming.persons).forEach(function (iid) {
       var ip = incoming.persons[iid];
-      var k = personKey(ip);
+      var name = personKey(ip).name;
+      var cands = byName[name] || [];
       var matchId = null;
-      if (k.year) {
-        var withYear = byNameYear[k.name + '|' + k.year];
-        if (withYear && withYear.length === 1) matchId = withYear[0];
+
+      if (cands.length) {
+        var scored = cands.map(function (id) {
+          var r = matchScore(ip, state.persons[id]);
+          return { id: id, score: r.score, contradiction: r.contradiction };
+        }).sort(function (a, b) { return b.score - a.score; });
+        var best = scored[0], second = scored[1];
+        var unambiguous = !second || best.score > second.score;
+        if (best.score > 0 && unambiguous) {
+          matchId = best.id;                 // rapprochement sûr (données concordantes)
+        } else if (cands.length === 1 && !best.contradiction) {
+          matchId = best.id;                 // nom unique, aucune contradiction
+        }
+        // sinon : ambigu ou contradictoire → on ne fusionne pas, on ajoute (compté)
+        if (!matchId) {
+          stats.conflicts++;
+          if (stats.details.length < 40) {
+            stats.details.push('« ' + fullName(ip) + ' » : rapprochement ambigu (' + cands.length + ' homonyme(s)) → ajouté séparément');
+          }
+        }
       }
-      if (!matchId) {
-        var byName = byNameOnly[k.name];
-        if (byName && byName.length === 1) matchId = byName[0];
-      }
+
       if (matchId) {
         var existing = state.persons[matchId];
         fillBlank(existing, 'prenom', ip.prenom);
         fillBlank(existing, 'nom', ip.nom);
         if (existing.sexe === '?' && ip.sexe && ip.sexe !== '?') existing.sexe = ip.sexe;
-        fillBlank(existing.naissance, 'date', ip.naissance && ip.naissance.date);
-        fillBlank(existing.naissance, 'lieu', ip.naissance && ip.naissance.lieu);
-        fillBlank(existing.deces, 'date', ip.deces && ip.deces.date);
-        fillBlank(existing.deces, 'lieu', ip.deces && ip.deces.lieu);
+        fillEventField(existing, ip, 'naissance', stats, stats.details, fullName(existing));
+        fillEventField(existing, ip, 'deces', stats, stats.details, fullName(existing));
         if (!existing.decede && ip.decede) existing.decede = true;
-        if (ip.notes && existing.notes.indexOf(ip.notes) === -1) {
+        if (ip.notes && (existing.notes || '').indexOf(ip.notes) === -1) {
           existing.notes = existing.notes ? existing.notes + '\n' + ip.notes : ip.notes;
         }
         idMap[iid] = matchId;
@@ -376,6 +490,9 @@
           // Cet enfant a déjà 2 parents différents ailleurs : on ne relie pas cette
           // union comme filiation pour éviter de fausser l'arbre (conflit de source).
           stats.conflicts++;
+          if (stats.details.length < 40) {
+            stats.details.push('« ' + fullName(child) + ' » : déjà 2 parents → filiation du fichier ignorée');
+          }
           return;
         }
         addChildToUnion(state, union.id, mapped);
@@ -411,6 +528,9 @@
     deleteUnion: deleteUnion,
     addChildToUnion: addChildToUnion,
     removeChildFromUnion: removeChildFromUnion,
+    removeParent: removeParent,
+    unlinkSpouse: unlinkSpouse,
+    unlinkChild: unlinkChild,
     setParent: setParent,
     mergeGedcom: mergeGedcom,
     getParents: getParents,

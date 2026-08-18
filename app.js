@@ -10,6 +10,16 @@
   function $(sel) { return document.querySelector(sel); }
   function $all(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
 
+  // Date interne : vide, ou AAAA / AAAA-MM / AAAA-MM-JJ (mois 01-12, jour 01-31).
+  function isValidDate(s) {
+    if (!s) return true;
+    var m = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(s);
+    if (!m) return false;
+    if (m[2] && (+m[2] < 1 || +m[2] > 12)) return false;
+    if (m[3] && (+m[3] < 1 || +m[3] > 31)) return false;
+    return true;
+  }
+
   var treeSvg = $('#treeSvg');
   var treeEmpty = $('#treeEmpty');
   var treeRootName = $('#treeRootName');
@@ -156,18 +166,33 @@
 
       function onSubmit(e) {
         e.preventDefault();
+        var nDate = $('#fNaissanceDate').value.trim();
+        var dDate = $('#fDecesDate').value.trim();
+        // Validation douce : vide, ou AAAA / AAAA-MM / AAAA-MM-JJ. On bloque la
+        // saisie invalide (elle casserait tri et fusion) sans fermer la fenêtre.
+        if (!isValidDate(nDate) || !isValidDate(dDate)) {
+          alert('Date invalide. Formats acceptés : AAAA, AAAA-MM ou AAAA-MM-JJ (ex. 1889-04-20).');
+          return;
+        }
         var fields = {
           prenom: $('#fPrenom').value.trim(),
           nom: $('#fNom').value.trim(),
           sexe: $('#fSexe').value,
           decede: $('#fDecede').checked,
-          naissance: { date: $('#fNaissanceDate').value.trim(), lieu: $('#fNaissanceLieu').value.trim() },
-          deces: { date: $('#fDecesDate').value.trim(), lieu: $('#fDecesLieu').value.trim() },
+          naissance: { date: nDate, lieu: $('#fNaissanceLieu').value.trim() },
+          deces: { date: dDate, lieu: $('#fDecesLieu').value.trim() },
           notes: $('#fNotes').value.trim()
         };
-        var person = existing ? Store.updatePerson(state, existing.id, fields) : Store.addPerson(state, fields);
-        finish(person);
+        var person = null;
+        try {
+          person = existing ? Store.updatePerson(state, existing.id, fields) : Store.addPerson(state, fields);
+        } catch (err) {
+          alert('Enregistrement impossible : ' + err.message);
+        }
+        // Fermeture TOUJOURS effectuée (le dialog restait ouvert sur certains
+        // WebView Android avec un form method="dialog").
         dlg.close();
+        finish(person);
       }
       function onCancel() { dlg.close(); }
       function onClose() { finish(null); cleanup(); }
@@ -262,9 +287,11 @@
 
   // --- Fiche détail (navigation + actions de parenté) --------------------
 
-  function relSection(title, list, addLabel, addAction) {
+  function relSection(title, list, addLabel, addAction, unlinkKind) {
     var chips = list.map(function (p) {
-      return '<span class="chip" data-open="' + p.id + '">' + escapeHtml(Store.fullName(p)) + '</span>';
+      var name = '<span class="chip-name" data-open="' + p.id + '">' + escapeHtml(Store.fullName(p)) + '</span>';
+      var rm = unlinkKind ? '<button class="chip-x" type="button" title="Détacher" data-unlink="' + unlinkKind + '" data-id="' + p.id + '">×</button>' : '';
+      return '<span class="chip">' + name + rm + '</span>';
     }).join('');
     var addChip = addAction ? '<span class="chip chip-add" data-act="' + addAction + '">+ ' + escapeHtml(addLabel) + '</span>' : '';
     var emptyHint = (!list.length && !addAction) ? '<span class="muted">—</span>' : '';
@@ -285,9 +312,9 @@
 
     if (p.notes) html += '<div class="detail-section"><h3>Notes</h3><div class="detail-notes">' + escapeHtml(p.notes) + '</div></div>';
 
-    html += relSection('Parents', parents, 'Ajouter un parent', 'add-parent');
-    html += relSection('Conjoint(s)', spouses, 'Ajouter un conjoint', 'add-spouse');
-    html += relSection('Enfants', children, 'Ajouter un enfant', 'add-child');
+    html += relSection('Parents', parents, 'Ajouter un parent', 'add-parent', 'parent');
+    html += relSection('Conjoint(s)', spouses, 'Ajouter un conjoint', 'add-spouse', 'spouse');
+    html += relSection('Enfants', children, 'Ajouter un enfant', 'add-child', 'child');
     if (siblings.length) html += relSection('Frères et sœurs', siblings, null, null);
 
     html += '<div class="detail-actions">' +
@@ -306,10 +333,22 @@
   }
   function closeDetail() { detailDialog.close(); }
 
+  // Tous les descendants d'une personne (pour interdire de les choisir comme
+  // parent : ça créerait une boucle « X est son propre ancêtre »).
+  function descendantIds(id) {
+    var seen = {}, stack = [id];
+    while (stack.length) {
+      Store.getChildren(state, stack.pop()).forEach(function (c) {
+        if (!seen[c.id]) { seen[c.id] = true; stack.push(c.id); }
+      });
+    }
+    return Object.keys(seen);
+  }
+
   function addParentFlow(personId) {
     var p = state.persons[personId];
     if ((p.parentIds || []).length >= 2) { alert('Cette personne a déjà deux parents enregistrés.'); return; }
-    var exclude = [personId].concat(Store.getChildren(state, personId).map(function (c) { return c.id; }));
+    var exclude = [personId].concat(descendantIds(personId));
     pickPerson({ title: 'Choisir le parent', excludeIds: exclude }).then(function (res) {
       if (!res) return;
       var slot = (p.parentIds || []).length;
@@ -376,7 +415,17 @@
     }
   }
 
+  function unlinkRelation(kind, personId, otherId) {
+    if (kind === 'parent') Store.removeParent(state, personId, otherId);
+    else if (kind === 'spouse') Store.unlinkSpouse(state, personId, otherId);
+    else if (kind === 'child') Store.unlinkChild(state, personId, otherId);
+    renderDetail(personId);
+    refreshAll();
+  }
+
   detailContent.addEventListener('click', function (e) {
+    var rmBtn = e.target.closest('[data-unlink]');
+    if (rmBtn) { unlinkRelation(rmBtn.dataset.unlink, detailContent.dataset.personId, rmBtn.dataset.id); return; }
     var openBtn = e.target.closest('[data-open]');
     if (openBtn) { renderDetail(openBtn.dataset.open); return; }
     var actBtn = e.target.closest('[data-act]');
@@ -493,7 +542,9 @@
       var msg = 'Fusion terminée : ' + stats.matched + ' personne(s) rapprochée(s) et complétée(s), ' +
         stats.added + ' nouvelle(s) personne(s) ajoutée(s), ' + stats.unions + ' union(s) traitée(s).';
       if (stats.conflicts) {
-        msg += '\n' + stats.conflicts + ' lien(s) parent-enfant ignoré(s) car la personne avait déjà 2 parents différents (à vérifier manuellement).';
+        msg += '\n\n⚠️ ' + stats.conflicts + ' point(s) à vérifier (homonymes ambigus, dates/lieux divergents, ou filiations en conflit) :';
+        (stats.details || []).slice(0, 12).forEach(function (d) { msg += '\n• ' + d; });
+        if ((stats.details || []).length > 12) msg += '\n… et ' + (stats.details.length - 12) + ' autre(s).';
       }
       alert(msg);
     }
@@ -631,7 +682,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.2.1';
+  var APP_VERSION = '1.3.0';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

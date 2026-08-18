@@ -126,15 +126,46 @@
     function getChildren(node, tag) {
       return (node.children || []).filter(function (c) { return c.tag === tag; });
     }
+    var GED_MONTHS = {
+      JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6,
+      JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12
+    };
+    function pad2(n) { return (n < 10 ? '0' : '') + n; }
+    // Convertit une date GEDCOM (« 12 JAN 1900 », « JAN 1900 », « ABT 1900 »,
+    // « BET 1900 AND 1905 »…) vers le format interne AAAA / AAAA-MM / AAAA-MM-JJ,
+    // en gardant le JOUR et le MOIS (l'ancienne version ne gardait que l'année).
+    // Les qualificatifs (ABT/BEF/AFT/EST/CAL/FROM/TO/BET/AND) sont ignorés ; pour
+    // une fourchette on retient la première date.
+    function gedToISODate(val) {
+      if (!val) return '';
+      var up = String(val).toUpperCase();
+      var year = up.match(/\b(\d{3,4})\b/);
+      if (!year) return '';
+      var mon = up.match(/\b(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\b/);
+      var day = up.match(/\b(\d{1,2})\b/);
+      var out = year[1].length === 3 ? '0' + year[1] : year[1];
+      if (mon) {
+        out += '-' + pad2(GED_MONTHS[mon[1]]);
+        if (day) out += '-' + pad2(parseInt(day[1], 10));
+      }
+      return out;
+    }
     function dateFromNode(node) {
       var d = getChild(node, 'DATE');
       var p = getChild(node, 'PLAC');
-      var out = { date: '', lieu: p ? p.value : '' };
-      if (d) {
-        var m = /(\d{4})/.exec(d.value);
-        out.date = m ? m[1] : '';
-      }
-      return out;
+      return { date: d ? gedToISODate(d.value) : '', lieu: p ? p.value.trim() : '' };
+    }
+    // Texte d'une note, en recollant les continuations GEDCOM : CONC = collé,
+    // CONT = nouvelle ligne. Sans ça les notes longues étaient tronquées à la
+    // première ligne.
+    function noteText(node) {
+      if (!node) return '';
+      var t = node.value || '';
+      (node.children || []).forEach(function (c) {
+        if (c.tag === 'CONC') t += c.value;
+        else if (c.tag === 'CONT') t += '\n' + c.value;
+      });
+      return t;
     }
 
     records.filter(function (r) { return r.tag === 'INDI'; }).forEach(function (r) {
@@ -157,7 +188,7 @@
         naissance: birt ? dateFromNode(birt) : { date: '', lieu: '' },
         deces: deat ? dateFromNode(deat) : { date: '', lieu: '' },
         decede: !!deat,
-        notes: noteNode ? noteNode.value : '',
+        notes: noteText(noteNode),
         parentIds: [], unionIds: []
       };
     });
