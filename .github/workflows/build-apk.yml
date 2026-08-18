@@ -55,16 +55,15 @@ jobs:
           echo "versionName=$VERSION versionCode=$VCODE"
 
       # Clé STABLE : les mises à jour s'installent par-dessus (fini le conflit de
-      # signature). Le keystore vient du secret, jamais committé.
-      - name: Restore signing keystore
+      # signature). Si les secrets ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD
+      # sont configurés, on restaure le vrai keystore de release ; sinon
+      # build.gradle retombe automatiquement sur le debug.keystore committé
+      # (voir signingConfigs.stable) pour que le build marche sans configuration.
+      - name: Restore signing keystore (si configuré)
+        if: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
-        run: |
-          if [ -z "$KEYSTORE_B64" ]; then
-            echo "::error::secret ANDROID_KEYSTORE_B64 absent. Cree le keystore (keytool) puis ajoute les secrets ANDROID_KEYSTORE_B64 et ANDROID_KEYSTORE_PASSWORD (cf. README)."
-            exit 1
-          fi
-          printf '%s' "$KEYSTORE_B64" | base64 -d > android/app/signing.p12
+        run: printf '%s' "$KEYSTORE_B64" | base64 -d > android/app/signing.p12
 
       - name: Build signed release APK
         working-directory: android

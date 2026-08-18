@@ -13,3 +13,6 @@ __pycache__/
 android/app/signing.p12
 *.p12
 *.keystore
+# Exception : clé de debug standard (pas un secret), committée pour que
+# toutes les builds CI/local partagent la même signature (cf. build.gradle).
+!android/app/debug.keystore
