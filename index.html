@@ -121,7 +121,7 @@
   <form id="personForm">
     <h2 id="personFormTitle">Nouvelle personne</h2>
     <div class="form-grid">
-      <label>Prénom<input id="fPrenom" type="text" required></label>
+      <label>Prénom<input id="fPrenom" type="text"></label>
       <label>Nom<input id="fNom" type="text"></label>
       <label>Sexe
         <select id="fSexe">
@@ -183,11 +183,10 @@
 
 <dialog id="onlineSearchDialog" class="app-dialog">
   <h2>Rechercher en ligne (WikiTree)</h2>
-  <p class="muted">Base généalogique collaborative libre. Recherchez une personne puis importez-la — seule, ou avec ses parents, conjoints et enfants — directement dans votre arbre.</p>
-  <div class="form-grid">
-    <label>Prénom<input id="wtFirstName" type="text"></label>
-    <label>Nom<input id="wtLastName" type="text"></label>
-  </div>
+  <p class="muted">Base généalogique collaborative libre. Tape un nom (et éventuellement un prénom) — la recherche est globale. Tu peux fermer cette fenêtre : tu seras notifié du résultat.</p>
+  <label class="span2" style="display:block">Recherche
+    <input id="wtQuery" type="search" placeholder="Nom, ou « Prénom Nom » (ex. Dupont, ou Jean Dupont)" style="width:100%">
+  </label>
   <label class="check-inline" style="margin-top:10px"><input id="wtWithRelatives" type="checkbox" checked> Importer aussi les proches (parents, conjoints, enfants)</label>
   <div class="btn-row" style="margin-top:10px">
     <button type="button" id="wtSearchBtn" class="btn btn-accent">Rechercher</button>

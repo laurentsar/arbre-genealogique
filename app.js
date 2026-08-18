@@ -69,6 +69,24 @@
     return parts.join(' · ');
   }
 
+  // Notification légère persistante (indépendante des dialogs) : sert à prévenir
+  // du résultat d'une recherche en ligne même si l'utilisateur a fermé la fiche.
+  var toastWrap = null;
+  function toast(msg, kind) {
+    if (!toastWrap) {
+      toastWrap = document.createElement('div');
+      toastWrap.className = 'toast-wrap';
+      document.body.appendChild(toastWrap);
+    }
+    var t = document.createElement('div');
+    t.className = 'toast' + (kind ? ' toast-' + kind : '');
+    t.textContent = msg;
+    t.addEventListener('click', function () { t.remove(); });
+    toastWrap.appendChild(t);
+    setTimeout(function () { t.classList.add('show'); }, 10);
+    setTimeout(function () { t.classList.remove('show'); setTimeout(function () { t.remove(); }, 300); }, 6000);
+  }
+
   function downloadFile(filename, content, mime) {
     var blob = new Blob([content], { type: mime });
     var url = URL.createObjectURL(blob);
@@ -237,9 +255,17 @@
           alert('Date invalide. Formats acceptés : AAAA, AAAA-MM ou AAAA-MM-JJ (ex. 1889-04-20).');
           return;
         }
+        var vPrenom = $('#fPrenom').value.trim();
+        var vNom = $('#fNom').value.trim();
+        // Prénom OU nom suffit (une personne peut n'avoir qu'un nom de famille —
+        // sinon les fiches importées sans prénom devenaient impossibles à modifier).
+        if (!vPrenom && !vNom) {
+          alert('Indique au moins un prénom OU un nom.');
+          return;
+        }
         var fields = {
-          prenom: $('#fPrenom').value.trim(),
-          nom: $('#fNom').value.trim(),
+          prenom: vPrenom,
+          nom: vNom,
           sexe: $('#fSexe').value,
           decede: $('#fDecede').checked,
           naissance: { date: nDate, lieu: $('#fNaissanceLieu').value.trim() },
@@ -729,8 +755,7 @@
     var p = state.persons[personId];
     if (!p) return;
     wtTargetId = personId;
-    $('#wtFirstName').value = p.prenom || '';
-    $('#wtLastName').value = p.nom || '';
+    $('#wtQuery').value = Store.fullName(p);
     wtResults.innerHTML = '';
     wtStatus.textContent = 'Recherche d’une correspondance pour « ' + Store.fullName(p) + ' »…';
     onlineDlg.showModal();
@@ -747,13 +772,21 @@
   }
 
   function runOnlineSearch() {
-    var fn = $('#wtFirstName').value.trim();
-    var ln = $('#wtLastName').value.trim();
-    if (!fn && !ln) { wtStatus.textContent = 'Saisissez au moins un prénom ou un nom.'; return; }
+    // Recherche GLOBALE : un seul champ. Dernier mot = nom, le reste = prénom
+    // (un seul mot → traité comme nom, l'index principal de WikiTree).
+    var q = ($('#wtQuery').value || '').trim();
+    if (!q) { wtStatus.textContent = 'Saisis un nom (ou « prénom nom »).'; return; }
+    var parts = q.split(/\s+/);
+    var fn = '', ln = '';
+    if (parts.length === 1) { ln = parts[0]; }
+    else { ln = parts[parts.length - 1]; fn = parts.slice(0, -1).join(' '); }
     wtResults.innerHTML = '';
     wtBusy(true, 'Recherche en ligne…');
     WikiTree.search(fn, ln, 25).then(function (matches) {
       wtBusy(false);
+      // Notifie même si l'utilisateur a fermé la fenêtre entre-temps.
+      toast('WikiTree : ' + matches.length + ' résultat(s) pour « ' + q + ' »' +
+        (onlineDlg.open ? '' : ' — rouvre « Rechercher en ligne » pour choisir.'));
       if (!matches.length) { wtStatus.textContent = 'Aucun résultat.'; return; }
       var completing = !!wtTargetId;
       wtStatus.textContent = matches.length + ' résultat(s). ' +
@@ -775,6 +808,7 @@
     }).catch(function (err) {
       wtBusy(false);
       wtStatus.textContent = 'Échec de la recherche : ' + err.message;
+      toast('Recherche WikiTree échouée : ' + err.message, 'error');
     });
   }
 
@@ -826,6 +860,7 @@
       wtBusy(false);
       wtStatus.textContent = 'Importé : ' + Store.fullName(main) + (withRel ? ' (avec ses proches)' : '') + '. Arbre recentré.';
       btn.textContent = '✓ Importé';
+      toast('✓ Importé depuis WikiTree : ' + Store.fullName(main));
     }).catch(function (err) {
       wtBusy(false);
       btn.disabled = false; btn.textContent = 'Importer';
@@ -895,6 +930,7 @@
       Store.save(state);
       refreshAll();
       wtBusy(false);
+      toast('✓ Fiche complétée depuis WikiTree : ' + Store.fullName(target));
       onlineDlg.close();
       wtTargetId = null;
       openDetail(target.id);
@@ -902,18 +938,19 @@
       wtBusy(false);
       btn.disabled = false; btn.textContent = 'Compléter';
       wtStatus.textContent = 'Échec : ' + err.message;
+      toast('Complétion échouée : ' + err.message, 'error');
     });
   }
 
   $('#btnOnlineSearch').addEventListener('click', openOnlineSearch);
   $('#wtSearchBtn').addEventListener('click', runOnlineSearch);
   $('#wtClose').addEventListener('click', function () { onlineDlg.close(); });
-  $('#wtFirstName').addEventListener('keydown', function (e) { if (e.key === 'Enter') runOnlineSearch(); });
+  $('#wtQuery').addEventListener('keydown', function (e) { if (e.key === 'Enter') runOnlineSearch(); });
   $('#wtLastName').addEventListener('keydown', function (e) { if (e.key === 'Enter') runOnlineSearch(); });
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.3';
+  var APP_VERSION = '1.4.4';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
