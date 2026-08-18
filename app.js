@@ -319,6 +319,7 @@
 
     html += '<div class="detail-actions">' +
       '<button class="btn" data-act="edit">Modifier</button>' +
+      '<button class="btn" data-act="complete-online">🔎 Compléter en ligne</button>' +
       '<button class="btn" data-act="root">Centrer l’arbre ici</button>' +
       '<button class="btn btn-danger" data-act="delete">Supprimer</button>' +
       '</div>';
@@ -393,11 +394,41 @@
     }
   }
 
+  // Après un ajout/une modif : cherche dans l'arbre une fiche qui ressemble et
+  // propose de fusionner (raccrocher les branches, compléter les infos, éviter
+  // les doublons). Priorité au LOCAL avant toute recherche en ligne.
+  function proposeMatch(id) {
+    var subject = state.persons[id];
+    if (!subject) return;
+    var cands = Store.findSimilar(state, subject, id);
+    if (!cands.length) return;
+    var dlg = $('#matchDialog');
+    $('#matchIntro').textContent = '« ' + Store.fullName(subject) +
+      ' » ressemble à une ou plusieurs fiches déjà présentes. Même personne ? La fusion complète les infos et raccroche les branches.';
+    var listEl = $('#matchList');
+    listEl.innerHTML = '';
+    cands.slice(0, 6).forEach(function (c) {
+      var li = document.createElement('li');
+      li.innerHTML = '<div><div class="person-line-name">' + escapeHtml(Store.fullName(c.person)) + '</div>' +
+        '<div class="person-line-sub">' + escapeHtml(detailMeta(c.person)) + '</div></div>' +
+        '<button class="btn btn-sm btn-accent" type="button">C’est la même</button>';
+      li.querySelector('button').addEventListener('click', function () {
+        Store.mergePersons(state, c.person.id, id);   // garde l'existante, absorbe l'autre
+        dlg.close();
+        refreshAll();
+        openDetail(c.person.id);
+      });
+      listEl.appendChild(li);
+    });
+    dlg.showModal();
+  }
+  $('#matchKeep').addEventListener('click', function () { $('#matchDialog').close(); });
+
   function handleDetailAction(act, personId) {
     var p = state.persons[personId];
     if (!p) return;
     if (act === 'edit') {
-      openPersonForm(p).then(function (updated) { if (updated) { renderDetail(personId); refreshAll(); } });
+      openPersonForm(p).then(function (updated) { if (updated) { renderDetail(personId); refreshAll(); proposeMatch(personId); } });
     } else if (act === 'root') {
       state.rootId = personId; Store.save(state); closeDetail(); refreshAll();
     } else if (act === 'delete') {
@@ -412,6 +443,8 @@
       addSpouseFlow(personId);
     } else if (act === 'add-child') {
       addChildFlow(personId);
+    } else if (act === 'complete-online') {
+      completeFromWikiTree(personId);
     }
   }
 
@@ -465,7 +498,7 @@
   $('#btnZoomReset').addEventListener('click', function () { if (panZoomCtl) panZoomCtl.reset(); });
 
   function addPersonFlow() {
-    openPersonForm(null).then(function (p) { if (p) refreshAll(); });
+    openPersonForm(null).then(function (p) { if (p) { refreshAll(); proposeMatch(p.id); } });
   }
   $('#btnAddPerson').addEventListener('click', addPersonFlow);
   $('#btnEmptyAdd').addEventListener('click', addPersonFlow);
@@ -583,11 +616,30 @@
   var onlineDlg = $('#onlineSearchDialog');
   var wtResults = $('#wtResults');
   var wtStatus = $('#wtStatus');
+  // Quand non-null : on ne CRÉE pas une nouvelle personne, on COMPLÈTE cette
+  // fiche existante avec le profil WikiTree choisi (bouton « Compléter en ligne »
+  // de la fiche). Null = recherche/import classique depuis l'onglet Personnes.
+  var wtTargetId = null;
 
   function openOnlineSearch() {
+    wtTargetId = null;
     wtResults.innerHTML = '';
     wtStatus.textContent = '';
     onlineDlg.showModal();
+  }
+
+  // Lance la recherche WikiTree pré-remplie avec le nom de la personne, en mode
+  // « compléter cette fiche » (BDD gratuite, en complément du rapprochement local).
+  function completeFromWikiTree(personId) {
+    var p = state.persons[personId];
+    if (!p) return;
+    wtTargetId = personId;
+    $('#wtFirstName').value = p.prenom || '';
+    $('#wtLastName').value = p.nom || '';
+    wtResults.innerHTML = '';
+    wtStatus.textContent = 'Recherche d’une correspondance pour « ' + Store.fullName(p) + ' »…';
+    onlineDlg.showModal();
+    runOnlineSearch();
   }
 
   function fmtMatch(m) {
@@ -607,7 +659,9 @@
     wtResults.innerHTML = '';
     WikiTree.search(fn, ln, 25).then(function (matches) {
       if (!matches.length) { wtStatus.textContent = 'Aucun résultat.'; return; }
-      wtStatus.textContent = matches.length + ' résultat(s). Choisissez qui importer :';
+      var completing = !!wtTargetId;
+      wtStatus.textContent = matches.length + ' résultat(s). ' +
+        (completing ? 'Choisissez la correspondance pour compléter cette fiche :' : 'Choisissez qui importer :');
       matches.forEach(function (m) {
         var info = fmtMatch(m);
         var li = document.createElement('li');
@@ -615,8 +669,11 @@
           '<div style="flex:1 1 auto;min-width:0">' +
           '<div class="person-line-name">' + escapeHtml(info.name) + '</div>' +
           '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div></div>' +
-          '<button class="btn btn-sm btn-accent" type="button">Importer</button>';
-        li.querySelector('button').addEventListener('click', function () { importFromWikiTree(m.Name, li); });
+          '<button class="btn btn-sm btn-accent" type="button">' + (completing ? 'Compléter' : 'Importer') + '</button>';
+        li.querySelector('button').addEventListener('click', function () {
+          if (wtTargetId) completeInto(m.Name, li, wtTargetId);
+          else importFromWikiTree(m.Name, li);
+        });
         wtResults.appendChild(li);
       });
     }).catch(function (err) {
@@ -674,6 +731,75 @@
     });
   }
 
+  // Complète une fiche EXISTANTE avec un profil WikiTree (ne crée pas de doublon
+  // de la personne visée) et raccroche éventuellement ses proches.
+  function completeInto(key, li, targetId) {
+    var btn = li.querySelector('button');
+    btn.disabled = true; btn.textContent = '…';
+    WikiTree.getRelatives(key).then(function (rel) {
+      var target = state.persons[targetId];
+      if (!target) throw new Error('Fiche à compléter introuvable');
+      var f = WikiTree.toFields(rel.person);
+      if (!target.prenom) target.prenom = f.prenom;
+      if (!target.nom) target.nom = f.nom;
+      if (target.sexe === '?' && f.sexe && f.sexe !== '?') target.sexe = f.sexe;
+      target.naissance = target.naissance || { date: '', lieu: '' };
+      target.deces = target.deces || { date: '', lieu: '' };
+      if (!target.naissance.date) target.naissance.date = f.naissance.date;
+      if (!target.naissance.lieu) target.naissance.lieu = f.naissance.lieu;
+      if (!target.deces.date) target.deces.date = f.deces.date;
+      if (!target.deces.lieu) target.deces.lieu = f.deces.lieu;
+      if (!target.decede && f.decede) target.decede = true;
+      if (!target.wikitree) target.wikitree = f.wikitree;
+      if (f.notes && (target.notes || '').indexOf(f.notes) === -1) {
+        target.notes = target.notes ? target.notes + '\n' + f.notes : f.notes;
+      }
+
+      if ($('#wtWithRelatives').checked) {
+        var byKey = {};
+        Object.keys(state.persons).forEach(function (id) {
+          var w = state.persons[id].wikitree;
+          if (w) byKey[w] = state.persons[id];
+        });
+        function ensure(profile) {
+          if (!profile || !profile.Name) return null;
+          if (byKey[profile.Name]) return byKey[profile.Name];
+          var p = Store.addPerson(state, WikiTree.toFields(profile));
+          byKey[profile.Name] = p;
+          return p;
+        }
+        // Parents : seulement si la fiche n'en a pas déjà (on n'écrase rien).
+        if (!(target.parentIds || []).length) {
+          var father = ensure(rel.parents[rel.fatherId]);
+          var mother = ensure(rel.parents[rel.motherId]);
+          var slot = 0;
+          if (father) { Store.setParent(state, target.id, father.id, slot++); }
+          if (mother) { Store.setParent(state, target.id, mother.id, slot++); }
+        }
+        var spouseIds = Object.keys(rel.spouses || {})
+          .map(function (k) { return ensure(rel.spouses[k]); })
+          .filter(Boolean).map(function (s) { return s.id; });
+        spouseIds.forEach(function (sid) { Store.findOrCreateUnion(state, [target.id, sid]); });
+        Object.keys(rel.children || {}).forEach(function (k) {
+          var c = ensure(rel.children[k]);
+          if (!c) return;
+          var partners = spouseIds.length ? [target.id, spouseIds[0]] : [target.id];
+          var u = Store.findOrCreateUnion(state, partners);
+          Store.addChildToUnion(state, u.id, c.id);
+        });
+      }
+
+      Store.save(state);
+      refreshAll();
+      onlineDlg.close();
+      wtTargetId = null;
+      openDetail(target.id);
+    }).catch(function (err) {
+      btn.disabled = false; btn.textContent = 'Compléter';
+      wtStatus.textContent = 'Échec : ' + err.message;
+    });
+  }
+
   $('#btnOnlineSearch').addEventListener('click', openOnlineSearch);
   $('#wtSearchBtn').addEventListener('click', runOnlineSearch);
   $('#wtClose').addEventListener('click', function () { onlineDlg.close(); });
@@ -682,7 +808,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.3.0';
+  var APP_VERSION = '1.4.0';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

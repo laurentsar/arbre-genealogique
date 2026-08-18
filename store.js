@@ -410,6 +410,93 @@
     });
   }
 
+  // Cherche dans l'arbre les personnes qui ressemblent à `fields` (même nom
+  // normalisé, sans contradiction d'années). Sert à proposer un rapprochement au
+  // moment où l'on ajoute/modifie une fiche, pour éviter les doublons.
+  function findSimilar(state, fields, excludeId) {
+    var name = personKey(fields).name;
+    if (!name) return [];
+    var out = [];
+    Object.keys(state.persons).forEach(function (id) {
+      if (id === excludeId) return;
+      var ep = state.persons[id];
+      if (personKey(ep).name !== name) return;
+      var r = matchScore(fields, ep);
+      if (r.contradiction) return;   // années qui se contredisent → autre personne
+      out.push({ person: ep, score: r.score });
+    });
+    out.sort(function (a, b) { return b.score - a.score; });
+    return out;
+  }
+
+  // Fusionne deux fiches DÉJÀ dans l'arbre : `dropId` est absorbée par `keepId`
+  // (champs complétés, relations reportées, unions dédoublonnées), puis supprimée.
+  function mergePersons(state, keepId, dropId) {
+    if (keepId === dropId) return;
+    var keep = state.persons[keepId], drop = state.persons[dropId];
+    if (!keep || !drop) return;
+
+    fillBlank(keep, 'prenom', drop.prenom);
+    fillBlank(keep, 'nom', drop.nom);
+    if (keep.sexe === '?' && drop.sexe && drop.sexe !== '?') keep.sexe = drop.sexe;
+    keep.naissance = keep.naissance || { date: '', lieu: '' };
+    keep.deces = keep.deces || { date: '', lieu: '' };
+    fillBlank(keep.naissance, 'date', drop.naissance && drop.naissance.date);
+    fillBlank(keep.naissance, 'lieu', drop.naissance && drop.naissance.lieu);
+    fillBlank(keep.deces, 'date', drop.deces && drop.deces.date);
+    fillBlank(keep.deces, 'lieu', drop.deces && drop.deces.lieu);
+    if (!keep.decede && drop.decede) keep.decede = true;
+    if (drop.notes && (keep.notes || '').indexOf(drop.notes) === -1) {
+      keep.notes = keep.notes ? keep.notes + '\n' + drop.notes : drop.notes;
+    }
+
+    function uniq(a) { return a.filter(function (x, i) { return x != null && a.indexOf(x) === i; }); }
+
+    Object.keys(state.unions).forEach(function (uidKey) {
+      var u = state.unions[uidKey];
+      u.partnerIds = uniq(u.partnerIds.map(function (x) { return x === dropId ? keepId : x; }));
+      u.childIds = uniq(u.childIds.map(function (x) { return x === dropId ? keepId : x; }));
+      u.childIds = u.childIds.filter(function (c) { return u.partnerIds.indexOf(c) === -1; });
+    });
+    Object.keys(state.persons).forEach(function (pid) {
+      var p = state.persons[pid];
+      p.parentIds = uniq((p.parentIds || []).map(function (x) { return x === dropId ? keepId : x; }))
+        .filter(function (x) { return x !== pid; });
+    });
+    delete state.persons[dropId];
+
+    // Dédoublonne les unions devenues identiques (mêmes partenaires) en fusionnant
+    // leurs enfants.
+    var seen = {};
+    Object.keys(state.unions).forEach(function (uidKey) {
+      var u = state.unions[uidKey];
+      var key = u.partnerIds.slice().sort().join('|');
+      if (key !== '' && seen[key]) {
+        var master = state.unions[seen[key]];
+        master.childIds = uniq(master.childIds.concat(u.childIds));
+        fillBlank(master, 'dateDebut', u.dateDebut);
+        fillBlank(master, 'lieuDebut', u.lieuDebut);
+        delete state.unions[uidKey];
+      } else if (key !== '') {
+        seen[key] = uidKey;
+      }
+    });
+    Object.keys(state.unions).forEach(function (uidKey) {
+      var u = state.unions[uidKey];
+      if (u.partnerIds.length === 0 && u.childIds.length === 0) delete state.unions[uidKey];
+    });
+    // Reconstruit les unionIds à partir des unions restantes.
+    Object.keys(state.persons).forEach(function (pid) { state.persons[pid].unionIds = []; });
+    Object.keys(state.unions).forEach(function (uidKey) {
+      state.unions[uidKey].partnerIds.forEach(function (pid) {
+        var p = state.persons[pid];
+        if (p && p.unionIds.indexOf(uidKey) === -1) p.unionIds.push(uidKey);
+      });
+    });
+    if (state.rootId === dropId) state.rootId = keepId;
+    save(state);
+  }
+
   function mergeGedcom(state, incoming) {
     var idMap = {};
     var stats = { matched: 0, added: 0, unions: 0, conflicts: 0, details: [] };
@@ -531,6 +618,8 @@
     removeParent: removeParent,
     unlinkSpouse: unlinkSpouse,
     unlinkChild: unlinkChild,
+    findSimilar: findSimilar,
+    mergePersons: mergePersons,
     setParent: setParent,
     mergeGedcom: mergeGedcom,
     getParents: getParents,
