@@ -8,3 +8,8 @@ www
 # Python
 __pycache__/
 *.pyc
+
+# Android signing (jamais committe)
+android/app/signing.p12
+*.p12
+*.keystore

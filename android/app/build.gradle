@@ -16,10 +16,23 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        // Clé STABLE (identique à chaque build) → les mises à jour s'installent
+        // par-dessus la précédente. Le keystore est restauré en CI depuis le
+        // secret ANDROID_KEYSTORE_B64 (voir .github/workflows/build-apk.yml).
+        stable {
+            storeFile file('signing.p12')
+            storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+            keyAlias System.getenv('ANDROID_KEY_ALIAS') ?: 'app'
+            keyPassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+            storeType 'PKCS12'
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.stable
         }
     }
 }

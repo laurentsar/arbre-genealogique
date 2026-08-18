@@ -43,19 +43,41 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      # Repo public => pas de keystore secret committé.
-      # On construit un APK debug (signé par la clé debug intégrée),
-      # installable directement sur un téléphone perso.
-      - name: Build debug APK
+      # Version Android (versionName + versionCode) dérivée de package.json :
+      # versionCode monotone (x*10000+y*100+z) pour que les updates soient reconnues.
+      - name: Stamp Android version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          IFS=. read -r MA MI PA <<< "$VERSION"
+          VCODE=$((10#$MA*10000 + 10#$MI*100 + 10#$PA))
+          sed -i "s/versionCode 1$/versionCode $VCODE/" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"$VERSION\"/" android/app/build.gradle
+          echo "versionName=$VERSION versionCode=$VCODE"
+
+      # Clé STABLE : les mises à jour s'installent par-dessus (fini le conflit de
+      # signature). Le keystore vient du secret, jamais committé.
+      - name: Restore signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::secret ANDROID_KEYSTORE_B64 absent. Cree le keystore (keytool) puis ajoute les secrets ANDROID_KEYSTORE_B64 et ANDROID_KEYSTORE_PASSWORD (cf. README)."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_B64" | base64 -d > android/app/signing.p12
+
+      - name: Build signed release APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
 
       - name: Read app version
         id: version
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Rename APK with version
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk "arbre-genealogique-${{ steps.version.outputs.version }}.apk"
+        run: cp android/app/build/outputs/apk/release/app-release.apk "arbre-genealogique-${{ steps.version.outputs.version }}.apk"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
