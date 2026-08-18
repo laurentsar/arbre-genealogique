@@ -946,11 +946,10 @@
   $('#wtSearchBtn').addEventListener('click', runOnlineSearch);
   $('#wtClose').addEventListener('click', function () { onlineDlg.close(); });
   $('#wtQuery').addEventListener('keydown', function (e) { if (e.key === 'Enter') runOnlineSearch(); });
-  $('#wtLastName').addEventListener('keydown', function (e) { if (e.key === 'Enter') runOnlineSearch(); });
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.4';
+  var APP_VERSION = '1.4.5';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
