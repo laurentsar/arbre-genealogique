@@ -60,10 +60,15 @@ jobs:
       # build.gradle retombe automatiquement sur le debug.keystore committé
       # (voir signingConfigs.stable) pour que le build marche sans configuration.
       - name: Restore signing keystore (si configuré)
-        if: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
-        run: printf '%s' "$KEYSTORE_B64" | base64 -d > android/app/signing.p12
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 -d > android/app/signing.p12
+            echo "Keystore de release restauré."
+          else
+            echo "Pas de secret keystore → build.gradle retombe sur debug.keystore."
+          fi
 
       - name: Build signed release APK
         working-directory: android
