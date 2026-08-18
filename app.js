@@ -101,12 +101,40 @@
     panZoomCtl = Tree.render(treeSvg, state, { rootId: state.rootId, mode: treeMode, maxGen: maxGen, onSelect: focusPerson, onOpen: openDetail });
   }
 
-  // Recentre l'arbre sur une personne (clic sur une pastille = dérouler sa branche).
-  function focusPerson(id) {
+  // Navigation dans l'arbre : historique des personnes sur lesquelles on s'est
+  // centré, pour un bouton « Retour » (le clic sur une pastille recentrant sans
+  // moyen de revenir n'était pas pratique).
+  var rootHistory = [];
+
+  function updateBackBtn() {
+    var b = $('#btnTreeBack');
+    if (b) b.disabled = rootHistory.length === 0;
+  }
+
+  // Change la personne centrale. `record !== false` empile l'ancienne racine
+  // dans l'historique (pour pouvoir revenir).
+  function setRoot(id, record) {
     if (!state.persons[id]) return;
+    if (record !== false && state.rootId && state.rootId !== id) rootHistory.push(state.rootId);
     state.rootId = id;
     Store.save(state);
+    updateBackBtn();
     refreshAll();
+  }
+
+  function goBackRoot() {
+    var prev;
+    while (rootHistory.length) {
+      prev = rootHistory.pop();
+      if (state.persons[prev]) break;
+      prev = null;
+    }
+    if (prev) { state.rootId = prev; Store.save(state); updateBackBtn(); refreshAll(); }
+  }
+
+  // Recentre l'arbre sur une personne (clic sur une pastille = dérouler sa branche).
+  function focusPerson(id) {
+    setRoot(id);
   }
 
   function renderList() {
@@ -320,6 +348,7 @@
     html += '<div class="detail-actions">' +
       '<button class="btn" data-act="edit">Modifier</button>' +
       '<button class="btn" data-act="complete-online">🔎 Compléter en ligne</button>' +
+      '<button class="btn" data-act="find-duplicates">🔗 Doublons locaux</button>' +
       '<button class="btn" data-act="root">Centrer l’arbre ici</button>' +
       '<button class="btn btn-danger" data-act="delete">Supprimer</button>' +
       '</div>';
@@ -397,11 +426,14 @@
   // Après un ajout/une modif : cherche dans l'arbre une fiche qui ressemble et
   // propose de fusionner (raccrocher les branches, compléter les infos, éviter
   // les doublons). Priorité au LOCAL avant toute recherche en ligne.
-  function proposeMatch(id) {
+  function proposeMatch(id, announceNone) {
     var subject = state.persons[id];
     if (!subject) return;
     var cands = Store.findSimilar(state, subject, id);
-    if (!cands.length) return;
+    if (!cands.length) {
+      if (announceNone) alert('Aucun doublon local détecté pour « ' + Store.fullName(subject) +' ». L’arbre est cohérent sur cette personne.');
+      return;
+    }
     var dlg = $('#matchDialog');
     $('#matchIntro').textContent = '« ' + Store.fullName(subject) +
       ' » ressemble à une ou plusieurs fiches déjà présentes. Même personne ? La fusion complète les infos et raccroche les branches.';
@@ -430,7 +462,7 @@
     if (act === 'edit') {
       openPersonForm(p).then(function (updated) { if (updated) { renderDetail(personId); refreshAll(); proposeMatch(personId); } });
     } else if (act === 'root') {
-      state.rootId = personId; Store.save(state); closeDetail(); refreshAll();
+      closeDetail(); setRoot(personId);
     } else if (act === 'delete') {
       if (confirm('Supprimer ' + Store.fullName(p) + ' ? Cette action retire aussi ses liens de parenté.')) {
         Store.deletePerson(state, personId);
@@ -445,6 +477,8 @@
       addChildFlow(personId);
     } else if (act === 'complete-online') {
       completeFromWikiTree(personId);
+    } else if (act === 'find-duplicates') {
+      proposeMatch(personId, true);
     }
   }
 
@@ -489,9 +523,12 @@
   $('#btnChangeRoot').addEventListener('click', function () {
     pickPerson({ title: 'Centrer l’arbre sur…', allowNew: false }).then(function (res) {
       if (!res) return;
-      state.rootId = res.id; Store.save(state); renderTree();
+      setRoot(res.id);
     });
   });
+
+  var backBtn = $('#btnTreeBack');
+  if (backBtn) backBtn.addEventListener('click', goBackRoot);
 
   $('#btnZoomIn').addEventListener('click', function () { if (panZoomCtl) panZoomCtl.zoomIn(); });
   $('#btnZoomOut').addEventListener('click', function () { if (panZoomCtl) panZoomCtl.zoomOut(); });
@@ -505,7 +542,7 @@
 
   searchInput.addEventListener('input', renderList);
   rootSelect.addEventListener('change', function () {
-    state.rootId = rootSelect.value; Store.save(state); renderTree();
+    setRoot(rootSelect.value);
   });
 
   // --- Réglages : sauvegarde / GEDCOM / réinitialisation -----------------
@@ -620,6 +657,24 @@
   // fiche existante avec le profil WikiTree choisi (bouton « Compléter en ligne »
   // de la fiche). Null = recherche/import classique depuis l'onglet Personnes.
   var wtTargetId = null;
+  var wtTimer = null;
+
+  // Indicateur d'avancement de la recherche en ligne (elle peut être lente) :
+  // spinner + compteur de secondes, bouton désactivé le temps de l'appel.
+  function wtBusy(on, label) {
+    var btn = $('#wtSearchBtn');
+    if (btn) btn.disabled = on;
+    if (wtTimer) { clearInterval(wtTimer); wtTimer = null; }
+    if (on) {
+      var t0 = Date.now();
+      var draw = function () {
+        var s = Math.floor((Date.now() - t0) / 1000);
+        wtStatus.innerHTML = '<span class="spinner"></span> ' + escapeHtml(label) + ' (' + s + ' s)';
+      };
+      draw();
+      wtTimer = setInterval(draw, 500);
+    }
+  }
 
   function openOnlineSearch() {
     wtTargetId = null;
@@ -655,9 +710,10 @@
     var fn = $('#wtFirstName').value.trim();
     var ln = $('#wtLastName').value.trim();
     if (!fn && !ln) { wtStatus.textContent = 'Saisissez au moins un prénom ou un nom.'; return; }
-    wtStatus.textContent = 'Recherche…';
     wtResults.innerHTML = '';
+    wtBusy(true, 'Recherche en ligne…');
     WikiTree.search(fn, ln, 25).then(function (matches) {
+      wtBusy(false);
       if (!matches.length) { wtStatus.textContent = 'Aucun résultat.'; return; }
       var completing = !!wtTargetId;
       wtStatus.textContent = matches.length + ' résultat(s). ' +
@@ -677,6 +733,7 @@
         wtResults.appendChild(li);
       });
     }).catch(function (err) {
+      wtBusy(false);
       wtStatus.textContent = 'Échec de la recherche : ' + err.message;
     });
   }
@@ -684,6 +741,7 @@
   function importFromWikiTree(key, li) {
     var withRel = $('#wtWithRelatives').checked;
     var btn = li.querySelector('button');
+    wtBusy(true, 'Import des données…');
     btn.disabled = true; btn.textContent = 'Import…';
     WikiTree.getRelatives(key).then(function (rel) {
       // Index des personnes déjà importées (par identifiant WikiTree) pour éviter les doublons.
@@ -723,9 +781,11 @@
       state.rootId = main.id;
       Store.save(state);
       refreshAll();
+      wtBusy(false);
       wtStatus.textContent = 'Importé : ' + Store.fullName(main) + (withRel ? ' (avec ses proches)' : '') + '. Arbre recentré.';
       btn.textContent = '✓ Importé';
     }).catch(function (err) {
+      wtBusy(false);
       btn.disabled = false; btn.textContent = 'Importer';
       wtStatus.textContent = 'Échec de l’import : ' + err.message;
     });
@@ -736,6 +796,7 @@
   function completeInto(key, li, targetId) {
     var btn = li.querySelector('button');
     btn.disabled = true; btn.textContent = '…';
+    wtBusy(true, 'Complétion des données…');
     WikiTree.getRelatives(key).then(function (rel) {
       var target = state.persons[targetId];
       if (!target) throw new Error('Fiche à compléter introuvable');
@@ -791,10 +852,12 @@
 
       Store.save(state);
       refreshAll();
+      wtBusy(false);
       onlineDlg.close();
       wtTargetId = null;
       openDetail(target.id);
     }).catch(function (err) {
+      wtBusy(false);
       btn.disabled = false; btn.textContent = 'Compléter';
       wtStatus.textContent = 'Échec : ' + err.message;
     });
@@ -808,7 +871,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.1';
+  var APP_VERSION = '1.4.2';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
