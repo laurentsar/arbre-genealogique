@@ -20,20 +20,25 @@
     }).join('&');
     // Pas de credentials : l'API renvoie les profils publics et réplique
     // l'origine CORS. `credentials: omit` évite un blocage navigateur.
-    // Timeout 30 s : sans ça, une API lente laissait le « chargement » tourner
-    // indéfiniment sans retour.
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    var to = ctrl ? setTimeout(function () { ctrl.abort(); }, 30000) : null;
-    return fetch(API + '?' + qs, { credentials: 'omit', signal: ctrl ? ctrl.signal : undefined })
+    var fetchPromise = fetch(API + '?' + qs, { credentials: 'omit', signal: ctrl ? ctrl.signal : undefined })
       .then(function (r) {
         if (!r.ok) throw new Error('WikiTree HTTP ' + r.status);
         return r.json();
-      })
-      .catch(function (e) {
-        if (e && e.name === 'AbortError') throw new Error('délai dépassé (30 s) — réessayez');
-        throw e;
-      })
-      .finally(function () { if (to) clearTimeout(to); });
+      });
+    // Timeout garanti par Promise.race (pas seulement par AbortController) :
+    // dans l'app Android, les requêtes passent par le pont natif CapacitorHttp
+    // (contourne l'absence de CORS de l'API WikiTree — vérifié : elle ne
+    // renvoie jamais d'en-tête Access-Control-Allow-Origin), qui ne respecte
+    // pas toujours le signal d'abandon. Sans ce filet, une réponse lente ou
+    // bloquée laissait la recherche tourner indéfiniment sans jamais aboutir.
+    var timeoutPromise = new Promise(function (resolve, reject) {
+      setTimeout(function () {
+        if (ctrl) ctrl.abort();
+        reject(new Error('délai dépassé (30 s) — réessayez'));
+      }, 30000);
+    });
+    return Promise.race([fetchPromise, timeoutPromise]);
   }
 
   // "1926-04-00" -> "1926-04" ; "0000-00-00" -> "" ; "1982-00-00" -> "1982"
