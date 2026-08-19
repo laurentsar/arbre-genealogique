@@ -216,6 +216,74 @@
       });
     statPersons.textContent = Object.keys(state.persons).length;
     statUnions.textContent = Object.keys(state.unions).length;
+    renderSuggestions();
+  }
+
+  // --- Suggestions : scan de l'arbre (doublons, fiches incomplètes, dates) ---
+
+  var SUGGEST_CAP = 8;
+
+  function personChips(ids, extraClass) {
+    var shown = ids.slice(0, SUGGEST_CAP);
+    var html = shown.map(function (id) {
+      var p = state.persons[id];
+      if (!p) return '';
+      return '<span class="chip chip-name' + (extraClass ? ' ' + extraClass : '') + '" data-open="' + id + '">' + escapeHtml(Store.fullName(p)) + '</span>';
+    }).join('');
+    if (ids.length > SUGGEST_CAP) html += '<span class="muted" style="align-self:center;font-size:0.8rem">+' + (ids.length - SUGGEST_CAP) + ' de plus</span>';
+    return html;
+  }
+
+  function renderSuggestions() {
+    var box = $('#suggestionsBox');
+    if (!box) return;
+    var issues = Store.scanIssues(state);
+    var total = issues.duplicates.length + issues.noDates.length + issues.noSexe.length +
+      issues.isolated.length + issues.badDates.length;
+    if (!total) {
+      box.innerHTML = '<p class="muted">Aucun souci détecté. 👍</p>';
+      return;
+    }
+
+    var html = '';
+    if (issues.duplicates.length) {
+      html += '<div class="detail-section"><h3>Doublons probables (' + issues.duplicates.length + ')</h3><div class="chip-row">';
+      issues.duplicates.slice(0, SUGGEST_CAP).forEach(function (d) {
+        var a = state.persons[d.a], b = state.persons[d.b];
+        if (!a || !b) return;
+        html += '<span class="chip chip-add" data-dup="' + d.a + '">' +
+          escapeHtml(Store.fullName(a)) + ' ≈ ' + escapeHtml(Store.fullName(b)) + '</span>';
+      });
+      if (issues.duplicates.length > SUGGEST_CAP) html += '<span class="muted" style="align-self:center;font-size:0.8rem">+' + (issues.duplicates.length - SUGGEST_CAP) + ' de plus</span>';
+      html += '</div></div>';
+    }
+    if (issues.badDates.length) {
+      html += '<div class="detail-section"><h3>Dates suspectes (' + issues.badDates.length + ')</h3><div class="chip-row">';
+      issues.badDates.slice(0, SUGGEST_CAP).forEach(function (b) {
+        var p = state.persons[b.id];
+        if (!p) return;
+        html += '<span class="chip chip-name" data-open="' + b.id + '" title="' + escapeHtml(b.reason) + '">' + escapeHtml(Store.fullName(p)) + '</span>';
+      });
+      if (issues.badDates.length > SUGGEST_CAP) html += '<span class="muted" style="align-self:center;font-size:0.8rem">+' + (issues.badDates.length - SUGGEST_CAP) + ' de plus</span>';
+      html += '</div></div>';
+    }
+    if (issues.noDates.length) {
+      html += '<div class="detail-section"><h3>Sans aucune date (' + issues.noDates.length + ')</h3><div class="chip-row">' + personChips(issues.noDates) + '</div></div>';
+    }
+    if (issues.noSexe.length) {
+      html += '<div class="detail-section"><h3>Sexe non précisé (' + issues.noSexe.length + ')</h3><div class="chip-row">' + personChips(issues.noSexe) + '</div></div>';
+    }
+    if (issues.isolated.length) {
+      html += '<div class="detail-section"><h3>Isolées — aucun parent ni union (' + issues.isolated.length + ')</h3><div class="chip-row">' + personChips(issues.isolated) + '</div></div>';
+    }
+    box.innerHTML = html;
+
+    $all('#suggestionsBox [data-open]').forEach(function (el) {
+      el.addEventListener('click', function () { openDetail(el.dataset.open); });
+    });
+    $all('#suggestionsBox [data-dup]').forEach(function (el) {
+      el.addEventListener('click', function () { proposeMatch(el.dataset.dup, true); });
+    });
   }
 
   function refreshAll() {
@@ -725,6 +793,51 @@
   var wtTargetId = null;
   var wtTimer = null;
 
+  // Historique des recherches en ligne (indépendant des données généalogiques :
+  // clé localStorage séparée, jamais inclus dans les exports JSON/GEDCOM).
+  var WT_HISTORY_KEY = 'genealogie:wtHistory:v1';
+  var WT_HISTORY_MAX = 15;
+  function loadSearchHistory() {
+    try { return JSON.parse(localStorage.getItem(WT_HISTORY_KEY)) || []; } catch (e) { return []; }
+  }
+  function saveSearchHistory(list) {
+    try { localStorage.setItem(WT_HISTORY_KEY, JSON.stringify(list.slice(0, WT_HISTORY_MAX))); } catch (e) {}
+  }
+  function logSearch(query, count, errorMsg) {
+    if (!query) return;
+    var list = loadSearchHistory().filter(function (h) { return h.query !== query; });
+    list.unshift({ query: query, at: new Date().toISOString(), count: (count == null ? null : count), error: errorMsg || null });
+    saveSearchHistory(list);
+    renderSearchHistory();
+  }
+  function timeAgo(iso) {
+    var s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+    if (s < 60) return 'à l’instant';
+    var m = Math.floor(s / 60); if (m < 60) return 'il y a ' + m + ' min';
+    var h = Math.floor(m / 60); if (h < 24) return 'il y a ' + h + ' h';
+    return 'il y a ' + Math.floor(h / 24) + ' j';
+  }
+  function renderSearchHistory() {
+    var box = $('#wtHistoryBox');
+    if (!box) return;
+    var list = loadSearchHistory();
+    if (!list.length) { box.innerHTML = ''; return; }
+    var html = '<div class="detail-section"><h3>Recherches récentes</h3><div class="chip-row">';
+    html += list.map(function (h) {
+      var sub = h.error ? 'échec' : (h.count == null ? '' : h.count + ' résultat(s)');
+      return '<span class="chip chip-name" data-history="' + escapeHtml(h.query) + '" title="' + escapeHtml(timeAgo(h.at) + (sub ? ' · ' + sub : '')) + '">' +
+        escapeHtml(h.query) + '</span>';
+    }).join('');
+    html += '</div></div>';
+    box.innerHTML = html;
+    $all('#wtHistoryBox [data-history]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        $('#wtQuery').value = el.dataset.history;
+        runOnlineSearch();
+      });
+    });
+  }
+
   // Indicateur d'avancement de la recherche en ligne (elle peut être lente) :
   // spinner + compteur de secondes, bouton désactivé le temps de l'appel.
   function wtBusy(on, label) {
@@ -746,6 +859,7 @@
     wtTargetId = null;
     wtResults.innerHTML = '';
     wtStatus.textContent = '';
+    renderSearchHistory();
     onlineDlg.showModal();
   }
 
@@ -784,6 +898,7 @@
     wtBusy(true, 'Recherche en ligne…');
     WikiTree.search(fn, ln, 25).then(function (matches) {
       wtBusy(false);
+      logSearch(q, matches.length);
       // Notifie même si l'utilisateur a fermé la fenêtre entre-temps.
       toast('WikiTree : ' + matches.length + ' résultat(s) pour « ' + q + ' »' +
         (onlineDlg.open ? '' : ' — rouvre « Rechercher en ligne » pour choisir.'));
@@ -807,6 +922,7 @@
       });
     }).catch(function (err) {
       wtBusy(false);
+      logSearch(q, null, err.message);
       wtStatus.textContent = 'Échec de la recherche : ' + err.message;
       toast('Recherche WikiTree échouée : ' + err.message, 'error');
     });
@@ -942,6 +1058,7 @@
     });
   }
 
+  $('#btnRescan').addEventListener('click', renderSuggestions);
   $('#btnOnlineSearch').addEventListener('click', openOnlineSearch);
   $('#wtSearchBtn').addEventListener('click', runOnlineSearch);
   $('#wtClose').addEventListener('click', function () { onlineDlg.close(); });

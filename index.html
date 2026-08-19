@@ -80,6 +80,15 @@
     </div>
 
     <div class="settings-card">
+      <h2>Suggestions</h2>
+      <p class="muted">Scanne l'arbre à la recherche de doublons probables, de fiches incomplètes et de dates suspectes. Se recalcule à chaque ouverture de cet onglet (pas de vérification en arrière-plan).</p>
+      <div class="btn-row" style="margin-bottom:10px">
+        <button id="btnRescan" class="btn btn-sm">🔎 Rescanner</button>
+      </div>
+      <div id="suggestionsBox"></div>
+    </div>
+
+    <div class="settings-card">
       <h2>Sauvegarde</h2>
       <p class="muted">Vos données restent uniquement sur cet appareil (stockage local). Exportez régulièrement une sauvegarde.</p>
       <div class="btn-row">
@@ -191,6 +200,7 @@
   <div class="btn-row" style="margin-top:10px">
     <button type="button" id="wtSearchBtn" class="btn btn-accent">Rechercher</button>
   </div>
+  <div id="wtHistoryBox"></div>
   <p id="wtStatus" class="muted" style="margin:10px 0 0"></p>
   <ul id="wtResults" class="person-list picker-list" style="margin-top:10px"></ul>
   <div class="dialog-actions">

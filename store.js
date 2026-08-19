@@ -497,6 +497,63 @@
     save(state);
   }
 
+  // Passe l'arbre au crible et remonte des pistes d'amélioration :
+  // doublons probables, fiches incomplètes, dates suspectes, personnes isolées.
+  // Lecture seule — ne modifie rien, se relance à la demande (pas de tâche de
+  // fond : un calcul complet sur plusieurs milliers de personnes prend
+  // quelques millisecondes, donc « scanner » = recalculer à chaque ouverture).
+  function scanIssues(state) {
+    var persons = allPersons(state);
+    var thisYear = new Date().getFullYear();
+
+    // Regroupe par nom normalisé avant de comparer : une comparaison exhaustive
+    // (chaque personne contre toutes les autres, comme findSimilar) est en O(n²)
+    // et devient inutilisable au-delà de quelques centaines de personnes. Deux
+    // personnes ne peuvent être des doublons que si elles partagent le même nom
+    // normalisé, donc on ne compare qu'à l'intérieur de chaque groupe.
+    var byName = {};
+    persons.forEach(function (p) {
+      var name = personKey(p).name;
+      if (!name) return;
+      (byName[name] = byName[name] || []).push(p);
+    });
+    var duplicates = [];
+    Object.keys(byName).forEach(function (name) {
+      var group = byName[name];
+      if (group.length < 2) return;
+      for (var i = 0; i < group.length; i++) {
+        for (var j = i + 1; j < group.length; j++) {
+          var r = matchScore(group[i], group[j]);
+          if (!r.contradiction) duplicates.push({ a: group[i].id, b: group[j].id, score: r.score });
+        }
+      }
+    });
+    duplicates.sort(function (x, y) { return y.score - x.score; });
+
+    var noDates = [], noSexe = [], isolated = [], badDates = [];
+    persons.forEach(function (p) {
+      var bY = yearOf(p.naissance && p.naissance.date);
+      var dY = yearOf(p.deces && p.deces.date);
+      if (!bY && !dY) noDates.push(p.id);
+      if (!p.sexe || p.sexe === '?') noSexe.push(p.id);
+      if (!(p.parentIds || []).length && !(p.unionIds || []).length) isolated.push(p.id);
+
+      if (bY && dY && +dY < +bY) badDates.push({ id: p.id, reason: 'décès (' + dY + ') avant naissance (' + bY + ')' });
+      if (bY && +bY > thisYear) badDates.push({ id: p.id, reason: 'naissance dans le futur (' + bY + ')' });
+      if (bY && !dY && !p.decede && (thisYear - bY) > 115) {
+        badDates.push({ id: p.id, reason: 'né(e) il y a ' + (thisYear - bY) + ' ans, non marqué(e) décédé(e)' });
+      }
+    });
+
+    return {
+      duplicates: duplicates,
+      noDates: noDates,
+      noSexe: noSexe,
+      isolated: isolated,
+      badDates: badDates
+    };
+  }
+
   function mergeGedcom(state, incoming) {
     var idMap = {};
     var stats = { matched: 0, added: 0, unions: 0, conflicts: 0, details: [] };
@@ -620,6 +677,7 @@
     unlinkChild: unlinkChild,
     findSimilar: findSimilar,
     mergePersons: mergePersons,
+    scanIssues: scanIssues,
     setParent: setParent,
     mergeGedcom: mergeGedcom,
     getParents: getParents,
