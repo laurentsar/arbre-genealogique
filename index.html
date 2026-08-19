@@ -89,6 +89,16 @@
     </div>
 
     <div class="settings-card">
+      <h2>Correspondances en ligne suggérées</h2>
+      <p class="muted">Cherche automatiquement sur WikiTree, pour les fiches sans lien déjà établi (les plus incomplètes en priorité), une correspondance non ambiguë (même année de naissance, ou candidat unique). Comme les « Smart Matches » de MyHeritage, mais gratuit et manuel : rien n'est fait tout seul, tu choisis pour chaque suggestion.</p>
+      <div class="btn-row" style="margin-bottom:10px">
+        <button id="btnFindOnlineSuggestions" class="btn btn-sm">🔎 Chercher des correspondances WikiTree</button>
+      </div>
+      <p id="onlineSuggestStatus" class="muted"></p>
+      <ul id="onlineSuggestList" class="person-list picker-list" style="margin-top:8px"></ul>
+    </div>
+
+    <div class="settings-card">
       <h2>Sauvegarde</h2>
       <p class="muted">Vos données restent uniquement sur cet appareil (stockage local). Exportez régulièrement une sauvegarde.</p>
       <div class="btn-row">

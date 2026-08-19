@@ -1058,6 +1058,107 @@
     });
   }
 
+  // --- Correspondances WikiTree suggérées (façon « Smart Match » MyHeritage,
+  // mais manuel : on cherche pour toi, tu décides pour chaque suggestion) ---
+
+  // Personnes sans lien WikiTree déjà établi, les plus incomplètes en premier
+  // (probablement les plus utiles à compléter). Plafonné : chaque recherche
+  // est un appel réseau, pas question d'en lancer des centaines d'un coup.
+  function candidatesForOnlineMatch(limit) {
+    return Store.allPersons(state)
+      .filter(function (p) { return !p.wikitree && (p.prenom || p.nom); })
+      .sort(function (a, b) {
+        function completeness(p) {
+          var s = 0;
+          if (p.naissance && p.naissance.date) s++;
+          if (p.deces && p.deces.date) s++;
+          if (p.sexe && p.sexe !== '?') s++;
+          return s;
+        }
+        return completeness(a) - completeness(b);
+      })
+      .slice(0, limit);
+  }
+
+  // Cherche sur WikiTree pour chaque personne du lot (3 recherches en
+  // parallèle max) et ne retient qu'une correspondance NON AMBIGUË : même
+  // année de naissance des deux côtés, ou candidat unique si la fiche locale
+  // n'a pas de date (sinon on ignore silencieusement — mieux vaut rater une
+  // suggestion que proposer un mauvais rapprochement).
+  function scanOnlineSuggestions(persons, onProgress) {
+    var CONCURRENCY = 3;
+    var results = [];
+    var idx = 0, done = 0;
+    return new Promise(function (resolve) {
+      function next() {
+        if (idx >= persons.length) return;
+        var p = persons[idx++];
+        WikiTree.search(p.prenom || '', p.nom || '', 5).then(function (matches) {
+          var localYear = p.naissance && p.naissance.date ? p.naissance.date.slice(0, 4) : '';
+          var best = null;
+          if (localYear) {
+            best = matches.filter(function (m) {
+              var y = m.BirthDate && m.BirthDate !== '0000-00-00' ? m.BirthDate.slice(0, 4) : '';
+              return y === localYear;
+            })[0] || null;
+          } else if (matches.length === 1) {
+            best = matches[0];
+          }
+          if (best) results.push({ personId: p.id, match: best });
+        }).catch(function () { /* recherche individuelle ratée : on l'ignore, ce n'est qu'une suggestion */ })
+          .then(function () {
+            done++;
+            if (onProgress) onProgress(done, persons.length);
+            if (idx < persons.length) next();
+            else if (done === persons.length) resolve(results);
+          });
+      }
+      if (!persons.length) { resolve(results); return; }
+      for (var i = 0; i < Math.min(CONCURRENCY, persons.length); i++) next();
+    });
+  }
+
+  function renderOnlineSuggestions(list) {
+    var ul = $('#onlineSuggestList');
+    ul.innerHTML = '';
+    list.forEach(function (item) {
+      var p = state.persons[item.personId];
+      if (!p) return;
+      var info = fmtMatch(item.match);
+      var li = document.createElement('li');
+      li.innerHTML = avatarHTML(p) +
+        '<div style="flex:1 1 auto;min-width:0">' +
+        '<div class="person-line-name">' + escapeHtml(Store.fullName(p)) + ' → ' + escapeHtml(info.name) + '</div>' +
+        '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div></div>' +
+        '<button class="btn btn-sm btn-accent" type="button">Compléter</button>' +
+        '<button class="btn btn-sm btn-ghost" type="button">Ignorer</button>';
+      var buttons = li.querySelectorAll('button');
+      buttons[0].addEventListener('click', function () { completeInto(item.match.Name, li, item.personId); });
+      buttons[1].addEventListener('click', function () { li.remove(); });
+      ul.appendChild(li);
+    });
+  }
+
+  function findOnlineSuggestions() {
+    var btn = $('#btnFindOnlineSuggestions');
+    var status = $('#onlineSuggestStatus');
+    var candidates = candidatesForOnlineMatch(10);
+    if (!candidates.length) { status.textContent = 'Toutes les fiches ont déjà un lien WikiTree (ou aucune personne à vérifier).'; return; }
+    btn.disabled = true;
+    $('#onlineSuggestList').innerHTML = '';
+    status.innerHTML = '<span class="spinner"></span> Vérification de ' + candidates.length + ' fiche(s)… (0/' + candidates.length + ')';
+    scanOnlineSuggestions(candidates, function (done, total) {
+      status.innerHTML = '<span class="spinner"></span> Vérification de ' + total + ' fiche(s)… (' + done + '/' + total + ')';
+    }).then(function (results) {
+      btn.disabled = false;
+      if (!results.length) { status.textContent = 'Aucune correspondance non ambiguë trouvée sur ' + candidates.length + ' fiche(s) vérifiée(s).'; return; }
+      status.textContent = results.length + ' correspondance(s) suggérée(s) sur ' + candidates.length + ' fiche(s) vérifiée(s) :';
+      renderOnlineSuggestions(results);
+    });
+  }
+
+  $('#btnFindOnlineSuggestions').addEventListener('click', findOnlineSuggestions);
+
   $('#btnRescan').addEventListener('click', renderSuggestions);
   $('#btnOnlineSearch').addEventListener('click', openOnlineSearch);
   $('#wtSearchBtn').addEventListener('click', runOnlineSearch);
