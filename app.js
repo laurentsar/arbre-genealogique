@@ -138,7 +138,28 @@
   // bien sur la version web/PWA). Voir aussi openCopyExport() : filet de
   // secours toujours disponible si aucun des deux ne fonctionne sur un
   // appareil donné.
-  function downloadFile(filename, content, mime) {
+  // Écrit le fichier via le plugin natif Capacitor Filesystem (cache de
+  // l'app) puis ouvre le partage natif Android (Share) sur ce fichier —
+  // totalement indépendant de la WebView : ni téléchargement blob:, ni API
+  // presse-papiers, ni Web Share du navigateur, qui se sont tous montrés
+  // peu fiables selon les appareils (certaines ROM Android restreignent ces
+  // API pour les apps installées hors Play Store). Renvoie null si l'app ne
+  // tourne pas dans le shell natif ou si les plugins ne sont pas dispo,
+  // pour que l'appelant retombe sur le chemin web.
+  function nativeShareFile(filename, content) {
+    var Cap = window.Capacitor;
+    if (!Cap || !Cap.isNativePlatform || !Cap.isNativePlatform()) return null;
+    var Plugins = Cap.Plugins || {};
+    var FS = Plugins.Filesystem, ShareApi = Plugins.Share;
+    if (!FS || !ShareApi) return null;
+    return FS.writeFile({ path: filename, data: content, directory: 'CACHE', encoding: 'utf8' })
+      .then(function () { return FS.getUri({ path: filename, directory: 'CACHE' }); })
+      .then(function (res) {
+        return ShareApi.share({ title: filename, dialogTitle: 'Enregistrer ou partager ' + filename, files: [res.uri] });
+      });
+  }
+
+  function webDownloadFallback(filename, content, mime) {
     var blob = new Blob([content], { type: mime });
     if (navigator.share && navigator.canShare && typeof File !== 'undefined') {
       try {
@@ -154,6 +175,15 @@
     a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  function downloadFile(filename, content, mime) {
+    var native = nativeShareFile(filename, content);
+    if (native) {
+      native.catch(function () { webDownloadFallback(filename, content, mime); });
+      return;
+    }
+    webDownloadFallback(filename, content, mime);
   }
 
   // Filet de secours TOUJOURS disponible : affiche les données en texte
@@ -1439,7 +1469,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.15';
+  var APP_VERSION = '1.4.16';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
