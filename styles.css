@@ -267,10 +267,16 @@ dialog h2 { margin-top: 0; font-size: 1.05rem; }
 .picker-list { max-height: 40vh; border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
 
 /* --- Fiche détail --- */
-.detail-header { display: flex; gap: 14px; align-items: center; margin-bottom: 12px; }
+.detail-header { display: flex; gap: 14px; align-items: center; margin-bottom: 4px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
 .detail-header .avatar { width: 60px; height: 60px; font-size: 1.4rem; }
 .detail-name { font-size: 1.2rem; font-weight: 700; margin: 0; }
 .detail-meta { color: var(--muted); font-size: 0.85rem; }
+.detail-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: var(--surface-2); border: 1px solid var(--line-union);
+  color: var(--line-union); border-radius: 999px; padding: 1px 8px;
+  font-size: 0.72rem; font-weight: 600; margin-left: 4px; vertical-align: middle;
+}
 .detail-section { margin-top: 14px; }
 .detail-section h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 8px; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -309,7 +315,17 @@ dialog h2 { margin-top: 0; font-size: 1.05rem; }
 }
 .chip-x:hover { color: #fff; background: var(--danger); }
 .detail-notes { white-space: pre-wrap; font-size: 0.9rem; color: var(--text); background: var(--surface-2); border-radius: 8px; padding: 10px; }
-.detail-actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+
+/* Trois groupes visuellement distincts : action principale, outils/navigation
+   secondaires (discrets), suppression nettement à part (irréversible). */
+.detail-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.detail-actions-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.detail-actions-secondary { gap: 8px; }
+.detail-actions-secondary .btn { color: var(--muted); }
+.detail-actions-secondary .btn:hover { color: var(--text); }
+.detail-actions-danger { margin-top: 4px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.detail-actions-danger .btn { opacity: 0.85; }
+.detail-actions-danger .btn:hover { opacity: 1; }
 
 @media (min-width: 720px) {
   .form-grid { grid-template-columns: 1fr 1fr 1fr; }

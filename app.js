@@ -628,7 +628,9 @@
 
     var html = '<div class="detail-header">' + avatarHTML(p) +
       '<div><p class="detail-name">' + escapeHtml(Store.fullName(p)) + '</p>' +
-      '<p class="detail-meta">' + escapeHtml(detailMeta(p)) + '</p></div></div>';
+      '<p class="detail-meta">' + escapeHtml(detailMeta(p)) +
+      (p.wikitree ? ' <span class="detail-badge" title="Liée à un profil WikiTree">🔗 WikiTree</span>' : '') +
+      '</p></div></div>';
 
     if (p.notes) html += '<div class="detail-section"><h3>Notes</h3><div class="detail-notes">' + escapeHtml(p.notes) + '</div></div>';
 
@@ -637,13 +639,22 @@
     html += relSection('Enfants', children, 'Ajouter un enfant', 'add-child', 'child');
     if (siblings.length) html += relSection('Frères et sœurs', siblings, null, null);
 
+    // Trois groupes distincts plutôt qu'un tas de boutons indifférenciés :
+    // action principale, outils/navigation secondaires, puis suppression
+    // nettement à part (irréversible, ne doit pas se cliquer par réflexe).
     html += '<div class="detail-actions">' +
-      '<button class="btn" data-act="edit">Modifier</button>' +
-      '<button class="btn" data-act="complete-online">🔎 Compléter en ligne</button>' +
-      '<button class="btn" data-act="find-duplicates">🔗 Doublons locaux</button>' +
-      '<button class="btn" data-act="center">Centrer la vue ici</button>' +
-      '<button class="btn" data-act="set-home">🏠 Définir comme racine</button>' +
-      '<button class="btn btn-danger" data-act="delete">Supprimer</button>' +
+      '<div class="detail-actions-row">' +
+        '<button class="btn btn-accent" data-act="edit">✎ Modifier</button>' +
+        '<button class="btn" data-act="complete-online">🔎 Compléter en ligne</button>' +
+      '</div>' +
+      '<div class="detail-actions-row detail-actions-secondary">' +
+        '<button class="btn btn-ghost btn-sm" data-act="center">📍 Centrer la vue</button>' +
+        '<button class="btn btn-ghost btn-sm" data-act="set-home">🏠 Définir comme racine</button>' +
+        '<button class="btn btn-ghost btn-sm" data-act="find-duplicates">🔗 Doublons locaux</button>' +
+      '</div>' +
+      '<div class="detail-actions-danger">' +
+        '<button class="btn btn-danger btn-sm" data-act="delete">🗑 Supprimer cette personne</button>' +
+      '</div>' +
       '</div>';
 
     detailContent.innerHTML = html;
@@ -1426,7 +1437,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.5';
+  var APP_VERSION = '1.4.14';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
