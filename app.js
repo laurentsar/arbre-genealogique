@@ -1102,13 +1102,15 @@
           Store.addChildToUnion(state, u.id, c.id);
         });
       }
-      state.rootId = main.id;
+      // Recentre la VUE sur la personne importée, sans toucher à la racine
+      // persistée : elle ne change que si l'utilisateur le demande explicitement
+      // (bouton « Définir comme racine »).
       viewRoot = main.id;
       rootHistory = [];
       Store.save(state);
       refreshAll();
       wtBusy(false);
-      wtStatus.textContent = 'Importé : ' + Store.fullName(main) + (withRel ? ' (avec ses proches)' : '') + '. Arbre recentré.';
+      wtStatus.textContent = 'Importé : ' + Store.fullName(main) + (withRel ? ' (avec ses proches)' : '') + '. Vue recentrée.';
       btn.textContent = '✓ Importé';
       toast('✓ Importé depuis WikiTree : ' + Store.fullName(main));
     }).catch(function (err) {
