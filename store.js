@@ -502,6 +502,93 @@
   // Lecture seule — ne modifie rien, se relance à la demande (pas de tâche de
   // fond : un calcul complet sur plusieurs milliers de personnes prend
   // quelques millisecondes, donc « scanner » = recalculer à chaque ouverture).
+  function levenshtein(a, b) {
+    var m = a.length, n = b.length;
+    if (!m) return n;
+    if (!n) return m;
+    var prev = [];
+    for (var j = 0; j <= n; j++) prev[j] = j;
+    for (var i = 1; i <= m; i++) {
+      var cur = [i];
+      for (j = 1; j <= n; j++) {
+        cur[j] = a.charAt(i - 1) === b.charAt(j - 1) ? prev[j - 1] : 1 + Math.min(prev[j - 1], prev[j], cur[j - 1]);
+      }
+      prev = cur;
+    }
+    return prev[n];
+  }
+
+  // Doublons à ORTHOGRAPHE PROCHE (mais pas identique) : même nom de famille,
+  // prénoms proches (fautes de frappe, troncatures, variantes — « Michèle » /
+  // « Michelle », « Julien » / « Julien Marie »). Contrairement à scanIssues()
+  // (noms strictement identiques), celui-ci accepte le bruit d'une comparaison
+  // approximative — d'où des garde-fous plus stricts pour écarter les faux
+  // positifs les plus fréquents (fratries homonymes du type François/Françoise,
+  // Jean/Jeanne, très courantes et PAS des doublons) :
+  //  - sexe connu et différent des deux côtés → jamais retenu, quel que soit le score
+  //  - années de naissance/décès incompatibles (y compris naissance après le
+  //    décès du candidat, ou l'inverse) → écarté
+  // Le score priorise les cas où un des deux côtés est ISOLÉ (aucun parent ni
+  // union) : c'est le signal le plus fort ET le plus actionnable — une fiche
+  // vide ressemblant à une fiche complète est presque toujours un doublon
+  // d'import, sans rien à perdre à la fusionner.
+  function scanFuzzyDuplicates(state) {
+    var persons = allPersons(state);
+    var bySurname = {};
+    persons.forEach(function (p) {
+      var s = normalizeName(p.nom);
+      if (!s) return;
+      (bySurname[s] = bySurname[s] || []).push(p);
+    });
+    var isIsolated = function (p) { return !(p.parentIds || []).length && !(p.unionIds || []).length; };
+    var out = [];
+    Object.keys(bySurname).forEach(function (surname) {
+      var group = bySurname[surname];
+      if (group.length < 2) return;
+      for (var i = 0; i < group.length; i++) {
+        for (var j = i + 1; j < group.length; j++) {
+          var a = group[i], b = group[j];
+          var fa = normalizeName(a.prenom), fb = normalizeName(b.prenom);
+          if (!fa || !fb || fa === fb) continue; // vide, ou déjà couvert par le scan exact
+          if (Math.min(fa.length, fb.length) < 3) continue; // trop court, trop de faux positifs
+          if (a.sexe && a.sexe !== '?' && b.sexe && b.sexe !== '?' && a.sexe !== b.sexe) continue;
+
+          var dist = levenshtein(fa, fb);
+          var prefix = fa.indexOf(fb) === 0 || fb.indexOf(fa) === 0;
+          if (dist > 2 && !prefix) continue;
+
+          var isoA = isIsolated(a), isoB = isIsolated(b);
+          // Aucune fiche vide des deux côtés : le signal le plus fort (une
+          // fiche vide qui ressemble à une fiche complète) est absent, donc on
+          // ne garde que les vraies fautes de frappe (distance 1) — un simple
+          // préfixe ou une distance 2 produit trop de faux positifs entre
+          // membres distincts d'une même famille (ex. « Elise »/« Céline »,
+          // ou « Marie »/« Marie-Françoise » qui sont souvent deux sœurs).
+          if (!isoA && !isoB && dist > 1) continue;
+
+          var ya = yearOf(a.naissance && a.naissance.date), yb = yearOf(b.naissance && b.naissance.date);
+          if (ya && yb && Math.abs(ya - yb) > 3) continue;
+          var da = yearOf(a.deces && a.deces.date), db = yearOf(b.deces && b.deces.date);
+          if (da && db && Math.abs(da - db) > 5) continue;
+          if (ya && db && +ya > +db) continue; // né(e) après le décès du candidat : générations différentes
+          if (yb && da && +yb > +da) continue;
+
+          var score = 0;
+          if (dist <= 1) score += 3; else if (dist === 2) score += 1;
+          if (prefix) score += 1;
+          if (isoA || isoB) score += 3;
+          if (ya && yb && ya === yb) score += 3;
+          if (score < 2) continue; // « faible » : trop peu fiable pour être proposé
+
+          var confidence = score >= 6 ? 'forte' : score >= 4 ? 'moyenne-forte' : 'moyenne';
+          out.push({ a: a.id, b: b.id, score: score, confidence: confidence, isolated: isoA || isoB });
+        }
+      }
+    });
+    out.sort(function (x, y) { return y.score - x.score; });
+    return out;
+  }
+
   function scanIssues(state) {
     var persons = allPersons(state);
     var thisYear = new Date().getFullYear();
@@ -547,6 +634,7 @@
 
     return {
       duplicates: duplicates,
+      fuzzyDuplicates: scanFuzzyDuplicates(state),
       noDates: noDates,
       noSexe: noSexe,
       isolated: isolated,

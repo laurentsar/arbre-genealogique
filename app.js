@@ -427,11 +427,28 @@
     return html;
   }
 
+  // Complétude d'une fiche (dates, lieux, sexe, notes, relations) : sert à
+  // décider automatiquement laquelle garder lors d'une fusion approximative
+  // (la plus complète l'emporte, l'autre est absorbée).
+  function completenessScore(p) {
+    var s = 0;
+    if (p.naissance && p.naissance.date) s++;
+    if (p.naissance && p.naissance.lieu) s++;
+    if (p.deces && p.deces.date) s++;
+    if (p.deces && p.deces.lieu) s++;
+    if (p.sexe && p.sexe !== '?') s++;
+    if (p.notes) s++;
+    s += (p.parentIds || []).length;
+    s += (p.unionIds || []).length * 2;
+    return s;
+  }
+
   function renderSuggestions() {
     var box = $('#suggestionsBox');
     if (!box) return;
     var issues = Store.scanIssues(state);
-    var total = issues.duplicates.length + issues.noDates.length + issues.noSexe.length +
+    var fuzzy = (issues.fuzzyDuplicates || []).filter(function (d) { return d.confidence !== 'faible'; });
+    var total = issues.duplicates.length + fuzzy.length + issues.noDates.length + issues.noSexe.length +
       issues.isolated.length + issues.badDates.length;
     if (!total) {
       box.innerHTML = '<p class="muted">Aucun souci détecté. 👍</p>';
@@ -449,6 +466,11 @@
       });
       if (issues.duplicates.length > SUGGEST_CAP) html += '<span class="muted" style="align-self:center;font-size:0.8rem">+' + (issues.duplicates.length - SUGGEST_CAP) + ' de plus</span>';
       html += '</div></div>';
+    }
+    if (fuzzy.length) {
+      html += '<div class="detail-section"><h3>Orthographe proche, probablement la même personne (' + fuzzy.length + ')</h3>' +
+        '<p class="muted" style="margin:0 0 8px">Noms différents mais proches (fautes de frappe, troncatures). Vérifie avant de fusionner.</p>' +
+        '<ul class="person-list picker-list" id="fuzzyDupList"></ul></div>';
     }
     if (issues.badDates.length) {
       html += '<div class="detail-section"><h3>Dates suspectes (' + issues.badDates.length + ')</h3><div class="chip-row">';
@@ -476,6 +498,38 @@
     });
     $all('#suggestionsBox [data-dup]').forEach(function (el) {
       el.addEventListener('click', function () { proposeMatch(el.dataset.dup, true); });
+    });
+    if (fuzzy.length) renderFuzzyDuplicates(fuzzy);
+  }
+
+  var CONFIDENCE_LABEL = { forte: 'confiance forte', 'moyenne-forte': 'confiance moyenne-forte', moyenne: 'confiance moyenne' };
+
+  function renderFuzzyDuplicates(fuzzy) {
+    var ul = $('#fuzzyDupList');
+    if (!ul) return;
+    ul.innerHTML = '';
+    fuzzy.forEach(function (d) {
+      var a = state.persons[d.a], b = state.persons[d.b];
+      if (!a || !b) return;
+      var keepId = completenessScore(a) >= completenessScore(b) ? d.a : d.b;
+      var dropId = keepId === d.a ? d.b : d.a;
+      var keep = state.persons[keepId], drop = state.persons[dropId];
+      var gains = fieldGains(keep, drop).concat(relationGains(keepId, dropId));
+      var li = document.createElement('li');
+      li.innerHTML = avatarHTML(keep) +
+        '<div style="flex:1 1 auto;min-width:0">' +
+        '<div class="person-line-name">' + escapeHtml(Store.fullName(keep)) + ' ≈ ' + escapeHtml(Store.fullName(drop)) + '</div>' +
+        '<div class="person-line-sub">' + escapeHtml(CONFIDENCE_LABEL[d.confidence] || d.confidence) + '</div>' +
+        gainsHTML(gains) + '</div>' +
+        '<button class="btn btn-sm btn-accent" type="button" data-role="merge">Fusionner</button>' +
+        '<button class="btn btn-sm btn-ghost" type="button" data-role="ignore">Ignorer</button>';
+      li.querySelector('[data-role="merge"]').addEventListener('click', function () {
+        Store.mergePersons(state, keepId, dropId);
+        refreshAll();
+        toast('✓ Fusionné : ' + Store.fullName(keep));
+      });
+      li.querySelector('[data-role="ignore"]').addEventListener('click', function () { li.remove(); });
+      ul.appendChild(li);
     });
   }
 
@@ -1469,7 +1523,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.16';
+  var APP_VERSION = '1.4.17';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
