@@ -129,13 +129,44 @@
     setTimeout(function () { t.classList.remove('show'); setTimeout(function () { t.remove(); }, 300); }, 6000);
   }
 
+  // Dans la WebView Android (app native), un lien <a download> sur une URL
+  // blob: ne déclenche pas toujours de téléchargement visible (pas de
+  // gestionnaire de téléchargement enregistré) : le clic ne fait rien, en
+  // silence. On tente d'abord le partage natif (Web Share, fichier réel —
+  // fonctionne dans la plupart des WebView Android récentes et laisse choisir
+  // Fichiers/Drive/e-mail…), puis on retombe sur le lien classique (fonctionne
+  // bien sur la version web/PWA). Voir aussi openCopyExport() : filet de
+  // secours toujours disponible si aucun des deux ne fonctionne sur un
+  // appareil donné.
   function downloadFile(filename, content, mime) {
     var blob = new Blob([content], { type: mime });
+    if (navigator.share && navigator.canShare && typeof File !== 'undefined') {
+      try {
+        var file = new File([blob], filename, { type: mime });
+        if (navigator.canShare({ files: [file] })) {
+          navigator.share({ files: [file] }).catch(function () { /* annulé par l'utilisateur : rien à faire */ });
+          return;
+        }
+      } catch (e) { /* Web Share indisponible sur cet appareil : on retombe sur le lien classique */ }
+    }
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  // Filet de secours TOUJOURS disponible : affiche les données en texte
+  // sélectionnable, avec un bouton copier. Ne dépend d'aucune API de
+  // téléchargement/partage — marche même si downloadFile() échoue en silence.
+  function openCopyExport(filename, content) {
+    var dlg = $('#copyExportDialog');
+    $('#copyExportTitle').textContent = 'Copier : ' + filename;
+    var ta = $('#copyExportArea');
+    ta.value = content;
+    dlg.showModal();
+    ta.focus();
+    ta.select();
   }
 
   // --- Vues ------------------------------------------------------------
@@ -820,6 +851,9 @@
   $('#btnExportJson').addEventListener('click', function () {
     downloadFile('arbre-genealogique.json', Store.exportJSON(state), 'application/json');
   });
+  $('#btnCopyJson').addEventListener('click', function () {
+    openCopyExport('arbre-genealogique.json', Store.exportJSON(state));
+  });
 
   $('#importJsonInput').addEventListener('change', function (e) {
     var file = e.target.files[0];
@@ -844,6 +878,25 @@
   $('#btnExportGedcom').addEventListener('click', function () {
     downloadFile('arbre-genealogique.ged', Gedcom.exportGEDCOM(state), 'text/plain');
   });
+  $('#btnCopyGedcom').addEventListener('click', function () {
+    openCopyExport('arbre-genealogique.ged', Gedcom.exportGEDCOM(state));
+  });
+
+  $('#btnCopyExportDo').addEventListener('click', function () {
+    var ta = $('#copyExportArea');
+    ta.select();
+    var ok = false;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(ta.value).then(function () { toast('✓ Copié dans le presse-papiers'); }).catch(function () {
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        toast(ok ? '✓ Copié dans le presse-papiers' : 'Copie impossible : sélectionne le texte manuellement', ok ? '' : 'error');
+      });
+      return;
+    }
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    toast(ok ? '✓ Copié dans le presse-papiers' : 'Copie impossible : sélectionne le texte manuellement', ok ? '' : 'error');
+  });
+  $('#btnCopyExportClose').addEventListener('click', function () { $('#copyExportDialog').close(); });
 
   $('#importGedcomInput').addEventListener('change', function (e) {
     var file = e.target.files[0];
