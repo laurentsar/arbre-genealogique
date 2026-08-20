@@ -22,7 +22,6 @@
 
   var treeSvg = $('#treeSvg');
   var treeEmpty = $('#treeEmpty');
-  var treeRootName = $('#treeRootName');
   var personList = $('#personList');
   var personListEmpty = $('#personListEmpty');
   var searchInput = $('#searchInput');
@@ -69,6 +68,49 @@
     return parts.join(' · ');
   }
 
+  // --- Mise en évidence des apports d'un rapprochement (doublon local ou ---
+  // --- correspondance en ligne) : ce que l'AUTRE fiche apporterait de neuf. --
+
+  function fieldGains(existing, incoming) {
+    var gains = [];
+    if (!existing.prenom && incoming.prenom) gains.push('prénom');
+    if (!existing.nom && incoming.nom) gains.push('nom');
+    if ((!existing.sexe || existing.sexe === '?') && incoming.sexe && incoming.sexe !== '?') gains.push('sexe');
+    if (!(existing.naissance && existing.naissance.date) && incoming.naissance && incoming.naissance.date) {
+      gains.push('naissance ' + incoming.naissance.date);
+    }
+    if (!(existing.naissance && existing.naissance.lieu) && incoming.naissance && incoming.naissance.lieu) {
+      gains.push('lieu de naissance');
+    }
+    if (!(existing.deces && existing.deces.date) && incoming.deces && incoming.deces.date) {
+      gains.push('décès ' + incoming.deces.date);
+    }
+    if (!(existing.deces && existing.deces.lieu) && incoming.deces && incoming.deces.lieu) {
+      gains.push('lieu de décès');
+    }
+    if (!existing.decede && incoming.decede) gains.push('statut décédé');
+    if (incoming.notes && (!existing.notes || existing.notes.indexOf(incoming.notes) === -1)) gains.push('notes');
+    return gains;
+  }
+
+  // Compare les relations déjà connues (branches raccrochées) entre deux
+  // personnes LOCALES — n'a de sens que pour un doublon interne à l'arbre.
+  function relationGains(existingId, incomingId) {
+    var gains = [];
+    function diff(getFn, label) {
+      var e = getFn(state, existingId).length, i = getFn(state, incomingId).length;
+      if (i > e) gains.push((i - e) + ' ' + label + (i - e > 1 ? 's' : '') + ' en plus');
+    }
+    diff(Store.getParents, 'parent');
+    diff(Store.getSpouses, 'conjoint');
+    diff(Store.getChildren, 'enfant');
+    return gains;
+  }
+
+  function gainsHTML(gains) {
+    return gains.length ? '<div class="gains-line">✚ ' + escapeHtml(gains.join(', ')) + '</div>' : '';
+  }
+
   // Notification légère persistante (indépendante des dialogs) : sert à prévenir
   // du résultat d'une recherche en ligne même si l'utilisateur a fermé la fiche.
   var toastWrap = null;
@@ -111,15 +153,35 @@
     treeEmpty.classList.toggle('hidden', hasPersons);
     if (!hasPersons) {
       while (treeSvg.firstChild) treeSvg.removeChild(treeSvg.firstChild);
-      treeRootName.textContent = '—';
+      renderBreadcrumb();
       return;
     }
     if (!state.rootId || !state.persons[state.rootId]) state.rootId = Object.keys(state.persons)[0];
     var cr = currentRoot();
-    treeRootName.textContent = Store.fullName(state.persons[cr]) +
-      (cr !== state.rootId ? ' (racine : ' + Store.fullName(state.persons[state.rootId]) + ')' : '');
     panZoomCtl = Tree.render(treeSvg, state, { rootId: cr, mode: treeMode, maxGen: maxGen, onSelect: focusPerson, onOpen: openDetail });
+    renderBreadcrumb();
     updateNav();
+  }
+
+  // Fil d'Ariane du chemin parcouru (rootHistory + position courante) :
+  // chaque étape est cliquable et ramène directement dessus, plus rapide que
+  // de cliquer plusieurs fois sur « Retour ».
+  function renderBreadcrumb() {
+    var nav = $('#treeBreadcrumb');
+    if (!nav) return;
+    if (!state.rootId || !state.persons[state.rootId]) { nav.innerHTML = ''; return; }
+    var trail = rootHistory.concat([currentRoot()]);
+    nav.innerHTML = trail.map(function (id, i) {
+      var p = state.persons[id];
+      var label = escapeHtml(p ? Store.fullName(p) : '?');
+      var isLast = i === trail.length - 1;
+      var sep = i > 0 ? '<span class="crumb-sep">›</span>' : '';
+      return sep + '<button type="button" class="crumb' + (isLast ? ' current' : '') + '" data-idx="' + i + '"' +
+        (isLast ? ' disabled' : '') + '>' + label + '</button>';
+    }).join('');
+    $all('#treeBreadcrumb .crumb:not(.current)').forEach(function (b) {
+      b.addEventListener('click', function () { goToBreadcrumb(+b.dataset.idx); });
+    });
   }
 
   // NAVIGATION vs RACINE.
@@ -164,6 +226,17 @@
     if (prev) { viewRoot = prev; updateNav(); renderTree(); }
   }
 
+  // Saute directement à une étape du fil d'Ariane (index dans
+  // rootHistory + position courante) : tronque l'historique après ce point.
+  function goToBreadcrumb(idx) {
+    var trail = rootHistory.concat([currentRoot()]);
+    if (idx < 0 || idx >= trail.length - 1 || !state.persons[trail[idx]]) return;
+    rootHistory = trail.slice(0, idx);
+    viewRoot = trail[idx];
+    updateNav();
+    renderTree();
+  }
+
   // Revenir à la PERSONNE RACINE (le point de départ).
   function goHome() {
     if (!state.rootId || !state.persons[state.rootId]) return;
@@ -190,18 +263,73 @@
     navigateTo(id);
   }
 
+  // Première lettre de regroupement (par NOM de famille, plus naturel pour
+  // chercher « les Sarniguet ») — accents neutralisés pour ne pas éclater
+  // « É » et « E » en deux groupes séparés.
+  function groupLetter(s) {
+    var c = (s || '').trim().charAt(0).toUpperCase();
+    if (!c) return '#';
+    var stripped = c.normalize('NFD').replace(/[̀-ͯ]/g, '');
+    return /[A-Z]/.test(stripped) ? stripped : '#';
+  }
+
+  function renderAlphaStrip(letters) {
+    var box = $('#alphaStrip');
+    if (!box) return;
+    // Peu d'intérêt à naviguer par lettre sur une petite liste.
+    if (letters.length < 4) { box.innerHTML = ''; return; }
+    box.innerHTML = letters.map(function (g) {
+      return '<button type="button" data-letter="' + g + '">' + g + '</button>';
+    }).join('');
+    $all('#alphaStrip button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var el = document.getElementById('plh-' + b.dataset.letter);
+        if (el) el.scrollIntoView({ block: 'start' });
+      });
+    });
+  }
+
+  // Bascule vers l'onglet Arbre, centré sur cette personne (navigation
+  // depuis la liste, sans passer par la fiche détail).
+  function viewInTree(id) {
+    navigateTo(id);
+    switchView('tree');
+  }
+
   function renderList() {
-    var results = Store.searchPersons(state, searchInput.value);
+    var results = Store.searchPersons(state, searchInput.value).slice().sort(function (a, b) {
+      var ka = (a.nom || a.prenom || ''), kb = (b.nom || b.prenom || '');
+      var c = ka.localeCompare(kb, 'fr', { sensitivity: 'base' });
+      return c !== 0 ? c : Store.fullName(a).localeCompare(Store.fullName(b), 'fr', { sensitivity: 'base' });
+    });
     personList.innerHTML = '';
     personListEmpty.classList.toggle('hidden', results.length > 0);
+    var letters = [];
+    var lastGroup = null;
     results.forEach(function (p) {
+      var g = groupLetter(p.nom || p.prenom);
+      if (g !== lastGroup) {
+        lastGroup = g;
+        letters.push(g);
+        var h = document.createElement('li');
+        h.className = 'person-list-header';
+        h.id = 'plh-' + g;
+        h.textContent = g;
+        personList.appendChild(h);
+      }
       var li = document.createElement('li');
       li.innerHTML = avatarHTML(p) +
-        '<div><div class="person-line-name">' + escapeHtml(Store.fullName(p)) + '</div>' +
-        '<div class="person-line-sub">' + escapeHtml(subLine(p)) + '</div></div>';
+        '<div style="flex:1 1 auto;min-width:0"><div class="person-line-name">' + escapeHtml(Store.fullName(p)) + '</div>' +
+        '<div class="person-line-sub">' + escapeHtml(subLine(p)) + '</div></div>' +
+        '<button class="person-nav-btn" type="button" title="Voir dans l’arbre">🌳</button>';
+      li.querySelector('.person-nav-btn').addEventListener('click', function (e) {
+        e.stopPropagation();
+        viewInTree(p.id);
+      });
       li.addEventListener('click', function () { openDetail(p.id); });
       personList.appendChild(li);
     });
+    renderAlphaStrip(letters);
   }
 
   function renderSettings() {
@@ -570,9 +698,13 @@
     var listEl = $('#matchList');
     listEl.innerHTML = '';
     cands.slice(0, 6).forEach(function (c) {
+      // Ce que fusionner apporterait au dossier conservé (c.person) : les
+      // infos et branches présentes sur la fiche courante et absentes là-bas.
+      var gains = fieldGains(c.person, subject).concat(relationGains(c.person.id, id));
       var li = document.createElement('li');
       li.innerHTML = '<div><div class="person-line-name">' + escapeHtml(Store.fullName(c.person)) + '</div>' +
-        '<div class="person-line-sub">' + escapeHtml(detailMeta(c.person)) + '</div></div>' +
+        '<div class="person-line-sub">' + escapeHtml(detailMeta(c.person)) + '</div>' +
+        gainsHTML(gains) + '</div>' +
         '<button class="btn btn-sm btn-accent" type="button">C’est la même</button>';
       li.querySelector('button').addEventListener('click', function () {
         Store.mergePersons(state, c.person.id, id);   // garde l'existante, absorbe l'autre
@@ -908,11 +1040,13 @@
         (completing ? 'Choisissez la correspondance pour compléter cette fiche :' : 'Choisissez qui importer :');
       matches.forEach(function (m) {
         var info = fmtMatch(m);
+        var gains = (completing && state.persons[wtTargetId]) ? fieldGains(state.persons[wtTargetId], WikiTree.toFields(m)) : [];
         var li = document.createElement('li');
         li.innerHTML = avatarHTML({ prenom: m.FirstName, nom: m.LastNameAtBirth || m.LastNameCurrent }) +
           '<div style="flex:1 1 auto;min-width:0">' +
           '<div class="person-line-name">' + escapeHtml(info.name) + '</div>' +
-          '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div></div>' +
+          '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div>' +
+          gainsHTML(gains) + '</div>' +
           '<button class="btn btn-sm btn-accent" type="button">' + (completing ? 'Compléter' : 'Importer') + '</button>';
         li.querySelector('button').addEventListener('click', function () {
           if (wtTargetId) completeInto(m.Name, li, wtTargetId);
@@ -1125,11 +1259,13 @@
       var p = state.persons[item.personId];
       if (!p) return;
       var info = fmtMatch(item.match);
+      var gains = fieldGains(p, WikiTree.toFields(item.match));
       var li = document.createElement('li');
       li.innerHTML = avatarHTML(p) +
         '<div style="flex:1 1 auto;min-width:0">' +
         '<div class="person-line-name">' + escapeHtml(Store.fullName(p)) + ' → ' + escapeHtml(info.name) + '</div>' +
-        '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div></div>' +
+        '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div>' +
+        gainsHTML(gains) + '</div>' +
         '<button class="btn btn-sm btn-accent" type="button">Compléter</button>' +
         '<button class="btn btn-sm btn-ghost" type="button">Ignorer</button>';
       var buttons = li.querySelectorAll('button');

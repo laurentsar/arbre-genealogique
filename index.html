@@ -25,8 +25,10 @@
       <div class="tree-toolbar-row">
         <button id="btnTreeBack" class="btn btn-ghost btn-sm" title="Revenir à la personne précédente" disabled>◀ Retour</button>
         <button id="btnTreeHome" class="btn btn-ghost btn-sm" title="Revenir à la personne racine" disabled>🏠 Racine</button>
-        <span class="tree-root-label">Vue : <strong id="treeRootName">—</strong></span>
         <button id="btnChangeRoot" class="btn btn-ghost btn-sm">Changer</button>
+      </div>
+      <div class="tree-toolbar-row">
+        <nav id="treeBreadcrumb" class="tree-breadcrumb" aria-label="Chemin de navigation"></nav>
       </div>
       <div class="tree-toolbar-row">
         <div class="segmented" id="modeSwitch">
@@ -63,6 +65,7 @@
       <input id="searchInput" type="search" placeholder="Rechercher une personne, un lieu, une note…">
       <button id="btnOnlineSearch" class="btn btn-sm" title="Rechercher dans la base généalogique libre WikiTree">🔍 Rechercher en ligne</button>
     </div>
+    <div id="alphaStrip" class="alpha-strip"></div>
     <ul id="personList" class="person-list"></ul>
     <p id="personListEmpty" class="empty-hint hidden">Aucun résultat.</p>
   </section>
