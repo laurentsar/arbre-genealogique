@@ -267,10 +267,14 @@
   // chercher « les Sarniguet ») — accents neutralisés pour ne pas éclater
   // « É » et « E » en deux groupes séparés.
   function groupLetter(s) {
-    var c = (s || '').trim().charAt(0).toUpperCase();
+    // Ignore la ponctuation en tête (ex. surnom entre guillemets dans un nom
+    // GEDCOM : `"Corfic" Morvan`) pour regrouper sur la vraie première lettre
+    // plutôt que de tout jeter dans « # ».
+    var stripped = (s || '').trim().replace(/^[^\p{L}\p{N}]+/u, '');
+    var c = stripped.charAt(0).toUpperCase();
     if (!c) return '#';
-    var stripped = c.normalize('NFD').replace(/[̀-ͯ]/g, '');
-    return /[A-Z]/.test(stripped) ? stripped : '#';
+    var norm = c.normalize('NFD').replace(/[̀-ͯ]/g, '');
+    return /[A-Z]/.test(norm) ? norm : '#';
   }
 
   function renderAlphaStrip(letters) {
