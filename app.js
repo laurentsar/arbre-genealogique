@@ -893,19 +893,21 @@
     openCopyExport('arbre-genealogique.ged', Gedcom.exportGEDCOM(state));
   });
 
+  // Volontairement PAS navigator.clipboard.writeText() : dans certaines
+  // WebView Android, cette API asynchrone reste bloquée en attente d'une
+  // permission système qui ne se résout jamais — ça a fait planter l'app
+  // pour un utilisateur (le bouton ne répondait plus du tout). execCommand
+  // est synchrone, sans permission à négocier : ça ne peut pas rester
+  // bloqué, même si le résultat est moins garanti sur certains appareils —
+  // d'où le rappel de la sélection manuelle (fiable, indépendante de toute
+  // API) dans le texte du dialogue au-dessus.
   $('#btnCopyExportDo').addEventListener('click', function () {
     var ta = $('#copyExportArea');
+    ta.focus();
     ta.select();
     var ok = false;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(ta.value).then(function () { toast('✓ Copié dans le presse-papiers'); }).catch(function () {
-        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-        toast(ok ? '✓ Copié dans le presse-papiers' : 'Copie impossible : sélectionne le texte manuellement', ok ? '' : 'error');
-      });
-      return;
-    }
     try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-    toast(ok ? '✓ Copié dans le presse-papiers' : 'Copie impossible : sélectionne le texte manuellement', ok ? '' : 'error');
+    toast(ok ? '✓ Copié dans le presse-papiers' : 'Copie automatique indisponible : le texte est sélectionné, fais un appui long dessus puis « Copier »', ok ? '' : 'error');
   });
   $('#btnCopyExportClose').addEventListener('click', function () { $('#copyExportDialog').close(); });
 
@@ -1437,7 +1439,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.14';
+  var APP_VERSION = '1.4.15';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
