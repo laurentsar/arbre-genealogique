@@ -1273,11 +1273,45 @@
       .slice(0, limit);
   }
 
+  // Correspondances écartées par l'utilisateur (« Signaler incohérence »),
+  // par personne : on ne les represente plus jamais tant qu'on ne trouve pas
+  // autre chose. Clé séparée, jamais incluse dans les exports.
+  var WT_REJECTED_KEY = 'genealogie:wtRejected:v1';
+  function loadRejected() {
+    try { return JSON.parse(localStorage.getItem(WT_REJECTED_KEY)) || {}; } catch (e) { return {}; }
+  }
+  function saveRejected(map) {
+    try { localStorage.setItem(WT_REJECTED_KEY, JSON.stringify(map)); } catch (e) {}
+  }
+  function rejectedKeysFor(personId) { return loadRejected()[personId] || []; }
+  function addRejected(personId, key) {
+    var map = loadRejected();
+    var list = map[personId] || [];
+    if (list.indexOf(key) === -1) list.push(key);
+    map[personId] = list;
+    saveRejected(map);
+  }
+
+  // Ne retient qu'une correspondance NON AMBIGUË parmi les résultats WikiTree :
+  // même année de naissance des deux côtés, ou candidat unique si la fiche
+  // locale n'a pas de date — en écartant les candidats déjà signalés comme
+  // incohérents pour cette personne (sinon ils reviendraient à l'identique).
+  function pickBestMatch(p, matches, rejectedKeys) {
+    var candidates = matches.filter(function (m) { return rejectedKeys.indexOf(m.Name) === -1; });
+    var localYear = p.naissance && p.naissance.date ? p.naissance.date.slice(0, 4) : '';
+    if (localYear) {
+      return candidates.filter(function (m) {
+        var y = m.BirthDate && m.BirthDate !== '0000-00-00' ? m.BirthDate.slice(0, 4) : '';
+        return y === localYear;
+      })[0] || null;
+    }
+    return candidates.length === 1 ? candidates[0] : null;
+  }
+
   // Cherche sur WikiTree pour chaque personne du lot (3 recherches en
-  // parallèle max) et ne retient qu'une correspondance NON AMBIGUË : même
-  // année de naissance des deux côtés, ou candidat unique si la fiche locale
-  // n'a pas de date (sinon on ignore silencieusement — mieux vaut rater une
-  // suggestion que proposer un mauvais rapprochement).
+  // parallèle max) et ne retient qu'une correspondance non ambiguë (voir
+  // pickBestMatch) — sinon on ignore silencieusement : mieux vaut rater une
+  // suggestion que proposer un mauvais rapprochement.
   function scanOnlineSuggestions(persons, onProgress) {
     var CONCURRENCY = 3;
     var results = [];
@@ -1287,16 +1321,7 @@
         if (idx >= persons.length) return;
         var p = persons[idx++];
         WikiTree.search(p.prenom || '', p.nom || '', 5).then(function (matches) {
-          var localYear = p.naissance && p.naissance.date ? p.naissance.date.slice(0, 4) : '';
-          var best = null;
-          if (localYear) {
-            best = matches.filter(function (m) {
-              var y = m.BirthDate && m.BirthDate !== '0000-00-00' ? m.BirthDate.slice(0, 4) : '';
-              return y === localYear;
-            })[0] || null;
-          } else if (matches.length === 1) {
-            best = matches[0];
-          }
+          var best = pickBestMatch(p, matches, rejectedKeysFor(p.id));
           if (best) results.push({ personId: p.id, match: best });
         }).catch(function () { /* recherche individuelle ratée : on l'ignore, ce n'est qu'une suggestion */ })
           .then(function () {
@@ -1311,26 +1336,65 @@
     });
   }
 
+  // Construit la ligne d'une suggestion (avatar, apports, actions). Réutilisé
+  // pour l'affichage initial et pour remplacer une ligne après un signalement.
+  function buildSuggestionRow(item) {
+    var p = state.persons[item.personId];
+    if (!p) return null;
+    var info = fmtMatch(item.match);
+    var gains = fieldGains(p, WikiTree.toFields(item.match));
+    var li = document.createElement('li');
+    li.innerHTML = avatarHTML(p) +
+      '<div style="flex:1 1 auto;min-width:0">' +
+      '<div class="person-line-name">' + escapeHtml(Store.fullName(p)) + ' → ' + escapeHtml(info.name) + '</div>' +
+      '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div>' +
+      gainsHTML(gains) + '</div>' +
+      '<button class="btn btn-sm btn-accent" type="button" data-role="complete">Compléter</button>' +
+      '<button class="btn btn-sm btn-ghost" type="button" data-role="reject" title="Signaler que ce n’est pas la bonne personne et en chercher une autre">⚠️</button>' +
+      '<button class="btn btn-sm btn-ghost" type="button" data-role="ignore">Ignorer</button>';
+    li.querySelector('[data-role="complete"]').addEventListener('click', function () { completeInto(item.match.Name, li, item.personId); });
+    li.querySelector('[data-role="ignore"]').addEventListener('click', function () { li.remove(); });
+    li.querySelector('[data-role="reject"]').addEventListener('click', function () { reportMatchInconsistency(item, li); });
+    return li;
+  }
+
+  // « Signaler incohérence » : cette correspondance n'est pas la bonne
+  // personne. On la met de côté (elle ne reviendra plus pour cette fiche) et
+  // on relance une recherche WikiTree en tâche de fond, sans bloquer le reste
+  // de l'écran, pour proposer une autre correspondance si une existe.
+  function reportMatchInconsistency(item, li) {
+    addRejected(item.personId, item.match.Name);
+    var p = state.persons[item.personId];
+    var sub = li.querySelector('.person-line-sub');
+    li.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+    if (sub) sub.innerHTML = '<span class="spinner"></span> Recherche d’une autre correspondance…';
+    if (!p) { li.remove(); return; }
+    WikiTree.search(p.prenom || '', p.nom || '', 5).then(function (matches) {
+      var best = pickBestMatch(p, matches, rejectedKeysFor(p.id));
+      if (!best) {
+        if (sub) sub.textContent = 'Aucune autre correspondance trouvée.';
+        ['complete', 'reject'].forEach(function (role) {
+          var b = li.querySelector('[data-role="' + role + '"]');
+          if (b) b.remove();
+        });
+        var ignoreBtn = li.querySelector('[data-role="ignore"]');
+        if (ignoreBtn) { ignoreBtn.disabled = false; ignoreBtn.textContent = 'Fermer'; }
+        return;
+      }
+      var fresh = buildSuggestionRow({ personId: item.personId, match: best });
+      if (fresh) li.replaceWith(fresh); else li.remove();
+    }).catch(function () {
+      if (sub) sub.textContent = 'Échec de la nouvelle recherche — réessaie plus tard.';
+      li.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+    });
+  }
+
   function renderOnlineSuggestions(list) {
     var ul = $('#onlineSuggestList');
     ul.innerHTML = '';
     list.forEach(function (item) {
-      var p = state.persons[item.personId];
-      if (!p) return;
-      var info = fmtMatch(item.match);
-      var gains = fieldGains(p, WikiTree.toFields(item.match));
-      var li = document.createElement('li');
-      li.innerHTML = avatarHTML(p) +
-        '<div style="flex:1 1 auto;min-width:0">' +
-        '<div class="person-line-name">' + escapeHtml(Store.fullName(p)) + ' → ' + escapeHtml(info.name) + '</div>' +
-        '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div>' +
-        gainsHTML(gains) + '</div>' +
-        '<button class="btn btn-sm btn-accent" type="button">Compléter</button>' +
-        '<button class="btn btn-sm btn-ghost" type="button">Ignorer</button>';
-      var buttons = li.querySelectorAll('button');
-      buttons[0].addEventListener('click', function () { completeInto(item.match.Name, li, item.personId); });
-      buttons[1].addEventListener('click', function () { li.remove(); });
-      ul.appendChild(li);
+      var li = buildSuggestionRow(item);
+      if (li) ul.appendChild(li);
     });
   }
 
