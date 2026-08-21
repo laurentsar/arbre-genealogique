@@ -1078,6 +1078,7 @@
   // de la fiche). Null = recherche/import classique depuis l'onglet Personnes.
   var wtTargetId = null;
   var wtTimer = null;
+  var wtCurrentCtrl = null; // AbortController de la recherche en cours, pour le bouton Annuler
 
   // Historique des recherches en ligne (indépendant des données généalogiques :
   // clé localStorage séparée, jamais inclus dans les exports JSON/GEDCOM).
@@ -1129,6 +1130,9 @@
   function wtBusy(on, label) {
     var btn = $('#wtSearchBtn');
     if (btn) btn.disabled = on;
+    var cancelBtn = $('#wtCancelBtn');
+    if (cancelBtn) cancelBtn.classList.toggle('hidden', !on);
+    if (!on) wtCurrentCtrl = null;
     if (wtTimer) { clearInterval(wtTimer); wtTimer = null; }
     if (on) {
       var t0 = Date.now();
@@ -1182,7 +1186,7 @@
     else { ln = parts[parts.length - 1]; fn = parts.slice(0, -1).join(' '); }
     wtResults.innerHTML = '';
     wtBusy(true, 'Recherche en ligne…');
-    WikiTree.search(fn, ln, 25).then(function (matches) {
+    WikiTree.search(fn, ln, 25, function (ctrl) { wtCurrentCtrl = ctrl; }).then(function (matches) {
       wtBusy(false);
       logSearch(q, matches.length);
       // Notifie même si l'utilisateur a fermé la fenêtre entre-temps.
@@ -1210,11 +1214,16 @@
       });
     }).catch(function (err) {
       wtBusy(false);
+      if (err && err.name === 'AbortError') { wtStatus.textContent = 'Recherche annulée.'; return; }
       logSearch(q, null, err.message);
       wtStatus.textContent = 'Échec de la recherche : ' + err.message;
       toast('Recherche WikiTree échouée : ' + err.message, 'error');
     });
   }
+
+  $('#wtCancelBtn').addEventListener('click', function () {
+    if (wtCurrentCtrl) wtCurrentCtrl.abort();
+  });
 
   function importFromWikiTree(key, li) {
     var withRel = $('#wtWithRelatives').checked;
@@ -1545,7 +1554,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.19';
+  var APP_VERSION = '1.4.20';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

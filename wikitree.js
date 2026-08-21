@@ -12,7 +12,11 @@
     'IsLiving', 'Father', 'Mother'
   ].join(',');
 
-  function get(params) {
+  // onController(ctrl), s'il est fourni, reçoit l'AbortController dès sa
+  // création — permet à l'appelant d'annuler la requête en cours (bouton
+  // « Annuler » pendant une recherche lente) sans changer la forme de la
+  // promesse renvoyée.
+  function get(params, onController) {
     params.appId = APP_ID;
     params.format = 'json';
     var qs = Object.keys(params).map(function (k) {
@@ -21,6 +25,7 @@
     // Pas de credentials : l'API renvoie les profils publics et réplique
     // l'origine CORS. `credentials: omit` évite un blocage navigateur.
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    if (onController) onController(ctrl);
     var fetchPromise = fetch(API + '?' + qs, { credentials: 'omit', signal: ctrl ? ctrl.signal : undefined })
       .then(function (r) {
         if (!r.ok) throw new Error('WikiTree HTTP ' + r.status);
@@ -64,14 +69,14 @@
   }
 
   // Recherche par prénom/nom. Renvoie un tableau de profils (résumés).
-  function search(firstName, lastName, limit) {
+  function search(firstName, lastName, limit, onController) {
     return get({
       action: 'searchPerson',
       FirstName: firstName || '',
       LastName: lastName || '',
       fields: FIELDS,
       limit: limit || 20
-    }).then(function (data) {
+    }, onController).then(function (data) {
       var block = Array.isArray(data) ? data[0] : data;
       var matches = (block && block.matches) || [];
       // searchPerson renvoie parfois l'entrée 0 (compteur) : on filtre.
