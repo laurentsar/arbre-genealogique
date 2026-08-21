@@ -11,6 +11,8 @@
   function $all(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
 
   // Date interne : vide, ou AAAA / AAAA-MM / AAAA-MM-JJ (mois 01-12, jour 01-31).
+  // Format de stockage inchangé (tri, comparaisons, export GEDCOM, WikiTree/
+  // INSEE en dépendent) — seuls la SAISIE et l'AFFICHAGE passent en JJ/MM/AAAA.
   function isValidDate(s) {
     if (!s) return true;
     var m = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(s);
@@ -18,6 +20,31 @@
     if (m[2] && (+m[2] < 1 || +m[2] > 12)) return false;
     if (m[3] && (+m[3] < 1 || +m[3] > 31)) return false;
     return true;
+  }
+
+  // AAAA-MM-JJ -> JJ/MM/AAAA (partiel : AAAA-MM -> MM/AAAA, AAAA -> AAAA).
+  function formatDateFr(iso) {
+    if (!iso) return '';
+    var m = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(iso);
+    if (!m) return iso; // format déjà inattendu : affiché tel quel plutôt que masqué
+    var y = m[1], mo = m[2], d = m[3];
+    if (d) return d + '/' + mo + '/' + y;
+    if (mo) return mo + '/' + y;
+    return y;
+  }
+
+  // Saisie utilisateur (JJ/MM/AAAA, MM/AAAA ou AAAA) -> format interne
+  // AAAA-MM-JJ. Accepte aussi directement le format interne en entrée, pour
+  // ne pas casser un collage depuis un ancien export ou un GEDCOM.
+  function parseDateFr(input) {
+    var s = (input || '').trim();
+    if (!s) return '';
+    if (/^\d{4}(-\d{2}(-\d{2})?)?$/.test(s)) return s;
+    var m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(s);
+    if (m) return m[3] + '-' + m[2] + '-' + m[1];
+    m = /^(\d{2})\/(\d{4})$/.exec(s);
+    if (m) return m[2] + '-' + m[1];
+    return s; // invalide : laissé tel quel, isValidDate() le rejettera avec un message clair
   }
 
   var treeSvg = $('#treeSvg');
@@ -50,7 +77,7 @@
   }
 
   function subLine(p) {
-    if (p.naissance && p.naissance.date) return 'né(e) ' + p.naissance.date;
+    if (p.naissance && p.naissance.date) return 'né(e) ' + formatDateFr(p.naissance.date);
     if (p.naissance && p.naissance.lieu) return p.naissance.lieu;
     if (p.decede) return 'Décédé(e)';
     return '';
@@ -60,10 +87,10 @@
     var parts = [];
     parts.push(p.sexe === 'H' ? 'Homme' : p.sexe === 'F' ? 'Femme' : 'Sexe non précisé');
     if (p.naissance && (p.naissance.date || p.naissance.lieu)) {
-      parts.push('né(e) ' + [p.naissance.date ? 'le ' + p.naissance.date : '', p.naissance.lieu ? 'à ' + p.naissance.lieu : ''].filter(Boolean).join(' '));
+      parts.push('né(e) ' + [p.naissance.date ? 'le ' + formatDateFr(p.naissance.date) : '', p.naissance.lieu ? 'à ' + p.naissance.lieu : ''].filter(Boolean).join(' '));
     }
     if (p.decede || (p.deces && (p.deces.date || p.deces.lieu))) {
-      parts.push('décédé(e) ' + [p.deces.date ? 'le ' + p.deces.date : '', p.deces.lieu ? 'à ' + p.deces.lieu : ''].filter(Boolean).join(' '));
+      parts.push('décédé(e) ' + [p.deces.date ? 'le ' + formatDateFr(p.deces.date) : '', p.deces.lieu ? 'à ' + p.deces.lieu : ''].filter(Boolean).join(' '));
     }
     return parts.join(' · ');
   }
@@ -77,13 +104,13 @@
     if (!existing.nom && incoming.nom) gains.push('nom');
     if ((!existing.sexe || existing.sexe === '?') && incoming.sexe && incoming.sexe !== '?') gains.push('sexe');
     if (!(existing.naissance && existing.naissance.date) && incoming.naissance && incoming.naissance.date) {
-      gains.push('naissance ' + incoming.naissance.date);
+      gains.push('naissance ' + formatDateFr(incoming.naissance.date));
     }
     if (!(existing.naissance && existing.naissance.lieu) && incoming.naissance && incoming.naissance.lieu) {
       gains.push('lieu de naissance');
     }
     if (!(existing.deces && existing.deces.date) && incoming.deces && incoming.deces.date) {
-      gains.push('décès ' + incoming.deces.date);
+      gains.push('décès ' + formatDateFr(incoming.deces.date));
     }
     if (!(existing.deces && existing.deces.lieu) && incoming.deces && incoming.deces.lieu) {
       gains.push('lieu de décès');
@@ -557,9 +584,9 @@
       $('#fNom').value = existing ? existing.nom : '';
       $('#fSexe').value = existing ? existing.sexe : '?';
       $('#fDecede').checked = existing ? !!existing.decede : false;
-      $('#fNaissanceDate').value = existing && existing.naissance ? existing.naissance.date : '';
+      $('#fNaissanceDate').value = existing && existing.naissance ? formatDateFr(existing.naissance.date) : '';
       $('#fNaissanceLieu').value = existing && existing.naissance ? existing.naissance.lieu : '';
-      $('#fDecesDate').value = existing && existing.deces ? existing.deces.date : '';
+      $('#fDecesDate').value = existing && existing.deces ? formatDateFr(existing.deces.date) : '';
       $('#fDecesLieu').value = existing && existing.deces ? existing.deces.lieu : '';
       $('#fNotes').value = existing ? existing.notes : '';
 
@@ -568,12 +595,15 @@
 
       function onSubmit(e) {
         e.preventDefault();
-        var nDate = $('#fNaissanceDate').value.trim();
-        var dDate = $('#fDecesDate').value.trim();
-        // Validation douce : vide, ou AAAA / AAAA-MM / AAAA-MM-JJ. On bloque la
-        // saisie invalide (elle casserait tri et fusion) sans fermer la fenêtre.
+        // Saisie en JJ/MM/AAAA (ou MM/AAAA, AAAA) ; converti vers le format
+        // interne AAAA-MM-JJ avant validation et stockage.
+        var nDate = parseDateFr($('#fNaissanceDate').value.trim());
+        var dDate = parseDateFr($('#fDecesDate').value.trim());
+        // Validation douce : vide, ou AAAA / AAAA-MM / AAAA-MM-JJ une fois
+        // converti. On bloque la saisie invalide (elle casserait tri et
+        // fusion) sans fermer la fenêtre.
         if (!isValidDate(nDate) || !isValidDate(dDate)) {
-          alert('Date invalide. Formats acceptés : AAAA, AAAA-MM ou AAAA-MM-JJ (ex. 1889-04-20).');
+          alert('Date invalide. Formats acceptés : JJ/MM/AAAA, MM/AAAA ou AAAA (ex. 20/04/1889).');
           return;
         }
         var vPrenom = $('#fPrenom').value.trim();
@@ -1802,7 +1832,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.31';
+  var APP_VERSION = '1.4.32';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
