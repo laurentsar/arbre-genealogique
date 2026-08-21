@@ -1358,6 +1358,15 @@
     return Store.allPersons(state)
       .filter(function (p) { return !p.wikitree && (p.prenom || p.nom); })
       .sort(function (a, b) {
+        // Priorité aux fiches qui ONT une date de naissance : c'est ce qui
+        // permet à pickBestMatch() de retenir une correspondance avec
+        // confiance (même année). Sans aucune date, WikiTree renvoie souvent
+        // plusieurs homonymes indépartageables → recherche pour rien. En
+        // cherchant d'abord les fiches datées, les premiers résultats
+        // exploitables arrivent bien plus vite.
+        function hasDate(p) { return !!(p.naissance && p.naissance.date); }
+        var ad = hasDate(a) ? 1 : 0, bd = hasDate(b) ? 1 : 0;
+        if (ad !== bd) return bd - ad;
         function completeness(p) {
           var s = 0;
           if (p.naissance && p.naissance.date) s++;
@@ -1413,7 +1422,7 @@
   // besoin d'attendre la fin du lot pour voir les premiers résultats — un
   // lot de 10 recherches peut prendre du temps si l'une d'elles traîne).
   function scanOnlineSuggestions(persons, onProgress, onResult) {
-    var CONCURRENCY = 3;
+    var CONCURRENCY = 6; // plus de recherches en vol = premiers résultats plus vite
     var results = [];
     var idx = 0, done = 0;
     return new Promise(function (resolve) {
@@ -1536,7 +1545,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.18';
+  var APP_VERSION = '1.4.19';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
