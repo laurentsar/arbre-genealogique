@@ -21,16 +21,22 @@
       // (fetch() patché pouvant se bloquer indéfiniment sur certains ROM).
       var aborted = false;
       if (onController) onController({ abort: function () { aborted = true; } });
-      return Cap.Plugins.CapacitorHttp.get({
+      var nativePromise = Cap.Plugins.CapacitorHttp.get({
         url: API,
         params: cleanParams,
-        connectTimeout: 10000,
-        readTimeout: 15000
+        connectTimeout: 8000,
+        readTimeout: 12000
       }).then(function (res) {
         if (aborted) { var e = new Error('Annulé'); e.name = 'AbortError'; throw e; }
         if (res.status && (res.status < 200 || res.status >= 300)) throw new Error('INSEE HTTP ' + res.status);
         return res.data;
       });
+      // Filet supplémentaire : voir wikitree.js pour le détail (certaines
+      // connexions mobiles empêchent même un timeout natif de se déclencher).
+      var nativeTimeoutPromise = new Promise(function (resolve, reject) {
+        setTimeout(function () { reject(new Error('délai dépassé (natif) — réessayez')); }, 20000);
+      });
+      return Promise.race([nativePromise, nativeTimeoutPromise]);
     }
     var qs = Object.keys(cleanParams)
       .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(cleanParams[k]); })
@@ -45,7 +51,7 @@
     var timeoutPromise = new Promise(function (resolve, reject) {
       setTimeout(function () {
         if (ctrl) ctrl.abort();
-        reject(new Error('délai dépassé (30 s) — réessayez'));
+        reject(new Error('délai dépassé (web) — réessayez'));
       }, 30000);
     });
     return Promise.race([fetchPromise, timeoutPromise]);

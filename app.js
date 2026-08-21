@@ -1145,6 +1145,16 @@
   // indéfini — l'utilisateur voit combien de temps il reste avant l'échec.
   var SEARCH_TIMEOUT_MS = 30000;
 
+  // Indique quelle voie de transport réseau est active (natif CapacitorHttp
+  // ou fetch() web) : affiché à l'écran pendant la recherche ET répercuté
+  // dans les messages d'erreur de wikitree.js/insee.js — sert de diagnostic
+  // si un blocage réapparaît malgré les filets déjà en place, sans avoir à
+  // deviner quelle voie a réellement été empruntée sur l'appareil.
+  function transportTag() {
+    var Cap = window.Capacitor;
+    return (Cap && Cap.isNativePlatform && Cap.isNativePlatform()) ? 'natif' : 'web';
+  }
+
   // Indicateur d'avancement de la recherche en ligne (elle peut être lente) :
   // spinner + compteur de secondes + barre de progression, bouton désactivé
   // le temps de l'appel.
@@ -1163,7 +1173,7 @@
       var draw = function () {
         var elapsed = Date.now() - t0;
         var s = Math.floor(elapsed / 1000);
-        wtStatus.innerHTML = '<span class="spinner"></span> ' + escapeHtml(label) + ' (' + s + ' s)';
+        wtStatus.innerHTML = '<span class="spinner"></span> ' + escapeHtml(label) + ' (' + s + ' s, ' + transportTag() + ')';
         if (progressEl) progressEl.value = Math.min(100, (elapsed / SEARCH_TIMEOUT_MS) * 100);
       };
       draw();
@@ -1358,7 +1368,7 @@
     var draw = function () {
       var elapsed = Date.now() - t0;
       var s = Math.floor(elapsed / 1000);
-      inseeStatus.innerHTML = '<span class="spinner"></span> Recherche dans le Fichier des décès (INSEE)… (' + s + ' s)';
+      inseeStatus.innerHTML = '<span class="spinner"></span> Recherche dans le Fichier des décès (INSEE)… (' + s + ' s, ' + transportTag() + ')';
       if (progressEl) progressEl.value = Math.min(100, (elapsed / SEARCH_TIMEOUT_MS) * 100);
     };
     if (progressEl) progressEl.classList.remove('hidden');
@@ -1765,7 +1775,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.27';
+  var APP_VERSION = '1.4.28';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

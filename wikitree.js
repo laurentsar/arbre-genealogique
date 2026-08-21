@@ -33,16 +33,28 @@
       // MIUI/Xiaomi qui gèlent agressivement la WebView).
       var aborted = false;
       if (onController) onController({ abort: function () { aborted = true; } });
-      return Cap.Plugins.CapacitorHttp.get({
+      var nativePromise = Cap.Plugins.CapacitorHttp.get({
         url: API,
         params: params,
-        connectTimeout: 10000,
-        readTimeout: 15000
+        connectTimeout: 8000,
+        readTimeout: 12000
       }).then(function (res) {
         if (aborted) { var e = new Error('Annulé'); e.name = 'AbortError'; throw e; }
         if (res.status && (res.status < 200 || res.status >= 300)) throw new Error('WikiTree HTTP ' + res.status);
         return res.data;
       });
+      // Filet de secours SUPPLÉMENTAIRE en plus du timeout natif ci-dessus :
+      // certaines connexions mobiles (proxy transparent, trafic « en filet
+      // d'eau » qui réarme le readTimeout sans jamais livrer de vraie
+      // réponse) peuvent empêcher même un timeout natif OkHttp de se
+      // déclencher. Ce filet JS reste un filet DE PLUS, pas LE filet — voir
+      // app.js pour le filet final indépendant de tout minuteur.
+      var nativeTimeoutPromise = new Promise(function (resolve, reject) {
+        // Tag « (natif) » : sert de diagnostic si ça bloque encore malgré
+        // tout — confirme quelle voie de transport a réellement été prise.
+        setTimeout(function () { reject(new Error('délai dépassé (natif) — réessayez')); }, 20000);
+      });
+      return Promise.race([nativePromise, nativeTimeoutPromise]);
     }
     // Web / dev : fetch() classique + filet Promise.race indépendant.
     var qs = Object.keys(params).map(function (k) {
@@ -60,7 +72,7 @@
     var timeoutPromise = new Promise(function (resolve, reject) {
       setTimeout(function () {
         if (ctrl) ctrl.abort();
-        reject(new Error('délai dépassé (30 s) — réessayez'));
+        reject(new Error('délai dépassé (web) — réessayez'));
       }, 30000);
     });
     return Promise.race([fetchPromise, timeoutPromise]);
