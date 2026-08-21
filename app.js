@@ -1151,16 +1151,27 @@
     }
   }
 
+  var inseeBox = $('#inseeBox');
+  var inseeResults = $('#inseeResults');
+  var inseeStatus = $('#inseeStatus');
+
   function openOnlineSearch() {
     wtTargetId = null;
     wtResults.innerHTML = '';
     wtStatus.textContent = '';
+    if (inseeBox) inseeBox.classList.add('hidden');
+    if (inseeResults) inseeResults.innerHTML = '';
+    if (inseeStatus) inseeStatus.textContent = '';
     renderSearchHistory();
     onlineDlg.showModal();
   }
 
   // Lance la recherche WikiTree pré-remplie avec le nom de la personne, en mode
   // « compléter cette fiche » (BDD gratuite, en complément du rapprochement local).
+  // En mode fiche individuelle, on interroge AUSSI le Fichier des décès INSEE
+  // en parallèle : source différente (actes d'état civil français), utile pour
+  // confirmer une date/lieu exact quand WikiTree ne suffit pas ou ne connaît
+  // pas la personne.
   function completeFromWikiTree(personId) {
     var p = state.persons[personId];
     if (!p) return;
@@ -1170,6 +1181,7 @@
     wtStatus.textContent = 'Recherche d’une correspondance pour « ' + Store.fullName(p) + ' »…';
     onlineDlg.showModal();
     runOnlineSearch();
+    searchInsee(p);
   }
 
   function fmtMatch(m) {
@@ -1230,6 +1242,75 @@
   $('#wtCancelBtn').addEventListener('click', function () {
     if (wtCurrentCtrl) wtCurrentCtrl.abort();
   });
+
+  function fmtInsee(f) {
+    var name = ((f.prenom || '') + ' ' + (f.nom || '')).trim();
+    var b = f.naissance.date ? f.naissance.date.slice(0, 4) : '';
+    var d = f.deces.date ? f.deces.date.slice(0, 4) : '';
+    var years = (b || d) ? ' (' + b + '–' + d + ')' : '';
+    var loc = [f.naissance.lieu, f.deces.lieu].filter(Boolean).join(' → ');
+    return { name: name, sub: 'Décès INSEE' + years + (loc ? ' · ' + loc : '') };
+  }
+
+  // Interroge le Fichier des décès INSEE (état civil français) pour la fiche
+  // ciblée, en complément de WikiTree — ne sert qu'à COMPLÉTER/CONFIRMER
+  // (pas de parents/enfants dans cette source). Échec réseau silencieux :
+  // ne doit jamais bloquer ni polluer la recherche WikiTree en parallèle.
+  function searchInsee(p) {
+    if (!inseeBox || !p || !p.nom) { if (inseeBox) inseeBox.classList.add('hidden'); return; }
+    inseeBox.classList.remove('hidden');
+    inseeResults.innerHTML = '';
+    inseeStatus.innerHTML = '<span class="spinner"></span> Recherche dans le Fichier des décès (INSEE)…';
+    var year = (p.naissance && p.naissance.date) ? p.naissance.date.slice(0, 4) : '';
+    InseeDeces.search(p.prenom, p.nom, year).then(function (matches) {
+      if (!matches.length) { inseeStatus.textContent = 'Aucun résultat dans le Fichier des décès.'; return; }
+      inseeStatus.textContent = matches.length + ' résultat(s) — actes d\'état civil :';
+      matches.forEach(function (f) {
+        var info = fmtInsee(f);
+        var gains = fieldGains(p, f);
+        var li = document.createElement('li');
+        li.innerHTML = avatarHTML(f) +
+          '<div style="flex:1 1 auto;min-width:0">' +
+          '<div class="person-line-name">' + escapeHtml(info.name) + '</div>' +
+          '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div>' +
+          gainsHTML(gains) + '</div>' +
+          '<button class="btn btn-sm btn-accent" type="button">Compléter</button>';
+        li.querySelector('button').addEventListener('click', function () {
+          completeIntoInsee(f, li, p.id);
+        });
+        inseeResults.appendChild(li);
+      });
+    }).catch(function (err) {
+      inseeStatus.textContent = 'Fichier des décès indisponible : ' + err.message;
+    });
+  }
+
+  // Complète la fiche ciblée avec un résultat INSEE (mêmes règles que
+  // completeInto : on ne remplace jamais un champ déjà renseigné).
+  function completeIntoInsee(f, li, targetId) {
+    var btn = li.querySelector('button');
+    btn.disabled = true; btn.textContent = '…';
+    var target = state.persons[targetId];
+    if (!target) return;
+    if (!target.prenom) target.prenom = f.prenom;
+    if (!target.nom) target.nom = f.nom;
+    if (target.sexe === '?' && f.sexe && f.sexe !== '?') target.sexe = f.sexe;
+    target.naissance = target.naissance || { date: '', lieu: '' };
+    target.deces = target.deces || { date: '', lieu: '' };
+    if (!target.naissance.date) target.naissance.date = f.naissance.date;
+    if (!target.naissance.lieu) target.naissance.lieu = f.naissance.lieu;
+    if (!target.deces.date) target.deces.date = f.deces.date;
+    if (!target.deces.lieu) target.deces.lieu = f.deces.lieu;
+    if (!target.decede) target.decede = true;
+    if (f.notes && (target.notes || '').indexOf(f.notes) === -1) {
+      target.notes = target.notes ? target.notes + '\n' + f.notes : f.notes;
+    }
+    Store.save(state);
+    refreshAll();
+    toast('✓ Fiche complétée depuis le Fichier des décès (INSEE) : ' + Store.fullName(target));
+    btn.textContent = '✓ Complété';
+    openDetail(target.id);
+  }
 
   function importFromWikiTree(key, li) {
     var withRel = $('#wtWithRelatives').checked;
@@ -1560,7 +1641,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.21';
+  var APP_VERSION = '1.4.22';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

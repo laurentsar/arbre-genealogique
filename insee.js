@@ -1,0 +1,75 @@
+/* insee.js — accès au Fichier des personnes décédées (INSEE), via l'API
+   ouverte matchID (deces.matchid.io). Données d'état civil françaises
+   (naissance/décès), gratuites, sans clé. Complément à WikiTree : moins de
+   généalogie (pas de parents/enfants), mais dates et lieux exacts issus des
+   actes — utile pour CONFIRMER une correspondance plutôt que l'importer. */
+(function (global) {
+  'use strict';
+
+  var API = 'https://deces.matchid.io/deces/api/v1/search';
+
+  function get(params, onController) {
+    var qs = Object.keys(params)
+      .filter(function (k) { return params[k] !== undefined && params[k] !== ''; })
+      .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); })
+      .join('&');
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    if (onController) onController(ctrl);
+    var fetchPromise = fetch(API + '?' + qs, { credentials: 'omit', signal: ctrl ? ctrl.signal : undefined })
+      .then(function (r) {
+        if (!r.ok) throw new Error('INSEE HTTP ' + r.status);
+        return r.json();
+      });
+    var timeoutPromise = new Promise(function (resolve, reject) {
+      setTimeout(function () {
+        if (ctrl) ctrl.abort();
+        reject(new Error('délai dépassé (30 s) — réessayez'));
+      }, 30000);
+    });
+    return Promise.race([fetchPromise, timeoutPromise]);
+  }
+
+  // "19010131" -> "1901-01-31" ; "19010000" -> "1901" ; "" -> ""
+  function fromInseeDate(d) {
+    if (!d || d.length < 4) return '';
+    var y = d.slice(0, 4), m = d.slice(4, 6), day = d.slice(6, 8);
+    if (m && m !== '00') { return (day && day !== '00') ? (y + '-' + m + '-' + day) : (y + '-' + m); }
+    return y;
+  }
+
+  function toFields(p) {
+    var sex = p.sex === 'M' ? 'H' : (p.sex === 'F' ? 'F' : '?');
+    var bLoc = (p.birth && p.birth.location) || {};
+    var dLoc = (p.death && p.death.location) || {};
+    var bCity = Array.isArray(bLoc.city) ? bLoc.city[0] : bLoc.city;
+    var dCity = Array.isArray(dLoc.city) ? dLoc.city[0] : dLoc.city;
+    return {
+      prenom: (p.name && p.name.first && p.name.first[0]) || '',
+      nom: (p.name && p.name.last) || '',
+      sexe: sex,
+      naissance: { date: fromInseeDate(p.birth && p.birth.date), lieu: bCity || '' },
+      deces: { date: fromInseeDate(p.death && p.death.date), lieu: dCity || '' },
+      decede: true,
+      notes: 'Source : Fichier des personnes décédées (INSEE)' +
+        (p.death && p.death.certificateId ? ', acte n° ' + p.death.certificateId : '') +
+        (p.source ? ' — millésime ' + p.source : '')
+    };
+  }
+
+  // Recherche par nom (obligatoire), prénom et année de naissance (optionnels,
+  // affinent le score de pertinence côté serveur). Ne couvre que les décès
+  // enregistrés en France (essentiellement depuis 1970) : renvoie un tableau
+  // vide en silence en cas d'échec réseau, pour ne jamais bloquer la
+  // recherche WikiTree menée en parallèle.
+  function search(firstName, lastName, birthYear, onController) {
+    if (!lastName) return Promise.resolve([]);
+    var params = { firstName: firstName || '', lastName: lastName, size: 15 };
+    if (birthYear) params.birthDate = String(birthYear);
+    return get(params, onController).then(function (data) {
+      var persons = (data && data.response && data.response.persons) || [];
+      return persons.map(toFields);
+    });
+  }
+
+  global.InseeDeces = { search: search, toFields: toFields };
+})(window);
