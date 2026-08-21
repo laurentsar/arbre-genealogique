@@ -1635,13 +1635,21 @@
 
   $('#btnRescan').addEventListener('click', renderSuggestions);
   $('#btnOnlineSearch').addEventListener('click', openOnlineSearch);
-  $('#wtSearchBtn').addEventListener('click', runOnlineSearch);
+  // En mode « compléter cette fiche », un relance manuelle (bouton ou Entrée)
+  // doit aussi relancer la recherche INSEE : sinon elle ne s'affiche qu'à
+  // l'ouverture automatique du dialogue et disparaît de fait dès qu'on
+  // retape/relance la recherche soi-même.
+  function triggerOnlineSearch() {
+    runOnlineSearch();
+    if (wtTargetId && state.persons[wtTargetId]) searchInsee(state.persons[wtTargetId]);
+  }
+  $('#wtSearchBtn').addEventListener('click', triggerOnlineSearch);
   $('#wtClose').addEventListener('click', function () { onlineDlg.close(); });
-  $('#wtQuery').addEventListener('keydown', function (e) { if (e.key === 'Enter') runOnlineSearch(); });
+  $('#wtQuery').addEventListener('keydown', function (e) { if (e.key === 'Enter') triggerOnlineSearch(); });
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.22';
+  var APP_VERSION = '1.4.23';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
