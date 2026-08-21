@@ -1,6 +1,6 @@
 {
   "name": "arbre-genealogique",
-  "version": "1.4.34",
+  "version": "1.4.35",
   "private": true,
   "type": "module",
   "description": "Application indépendante de gestion d'arbre généalogique (GEDCOM, ascendants/descendants).",
@@ -12,6 +12,7 @@
   "dependencies": {
     "@capacitor/android": "^7.4.3",
     "@capacitor/app": "^7.1.2",
+    "@capacitor/browser": "^7.0.5",
     "@capacitor/core": "^7.4.3",
     "@capacitor/filesystem": "^7.1.8",
     "@capacitor/share": "^7.0.4"

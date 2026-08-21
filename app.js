@@ -156,6 +156,30 @@
     setTimeout(function () { t.classList.remove('show'); setTimeout(function () { t.remove(); }, 300); }, 6000);
   }
 
+  // Ouvre une URL externe (site tiers) dans le navigateur système/onglet
+  // in-app (@capacitor/browser), plutôt qu'une navigation dans la WebView de
+  // l'app elle-même (casserait la SPA) ou un window.open() peu fiable en
+  // WebView native sans ce plugin.
+  function openExternal(url) {
+    var Cap = window.Capacitor;
+    if (Cap && Cap.isNativePlatform && Cap.isNativePlatform() && Cap.Plugins && Cap.Plugins.Browser) {
+      Cap.Plugins.Browser.open({ url: url });
+    } else {
+      window.open(url, '_blank', 'noopener');
+    }
+  }
+
+  // Lien de recherche Geneanet pour une personne (pas d'API publique chez
+  // Geneanet — contrairement à WikiTree/INSEE, ceci ouvre juste LEUR site
+  // dans le navigateur, prérempli, plutôt que d'interroger une donnée dans
+  // l'app).
+  function geneanetSearchUrl(prenom, nom) {
+    var params = 'go=1';
+    if (nom) params += '&nom=' + encodeURIComponent(nom);
+    if (prenom) params += '&prenom=' + encodeURIComponent(prenom);
+    return 'https://www.geneanet.org/fonds/individus/?' + params;
+  }
+
   // Dans la WebView Android (app native), un lien <a download> sur une URL
   // blob: ne déclenche pas toujours de téléchargement visible (pas de
   // gestionnaire de téléchargement enregistré) : le clic ne fait rien, en
@@ -771,6 +795,7 @@
         '<button class="btn btn-ghost btn-sm" data-act="center">📍 Centrer la vue</button>' +
         '<button class="btn btn-ghost btn-sm" data-act="set-home">🏠 Définir comme racine</button>' +
         '<button class="btn btn-ghost btn-sm" data-act="find-duplicates">🔗 Doublons locaux</button>' +
+        '<button class="btn btn-ghost btn-sm" data-act="open-geneanet" title="Ouvre la recherche Geneanet dans le navigateur, préremplie">🌐 Chercher sur Geneanet</button>' +
       '</div>' +
       '<div class="detail-actions-danger">' +
         '<button class="btn btn-danger btn-sm" data-act="delete">🗑 Supprimer cette personne</button>' +
@@ -909,6 +934,8 @@
       completeFromWikiTree(personId);
     } else if (act === 'find-duplicates') {
       proposeMatch(personId, true);
+    } else if (act === 'open-geneanet') {
+      openExternal(geneanetSearchUrl(p.prenom, p.nom));
     }
   }
 
@@ -1277,15 +1304,19 @@
     return { name: name, sub: (m.IsLiving ? 'Vivant · ' : '') + m.Name + years + loc };
   }
 
+  // Champ de recherche GLOBAL (un seul champ) : dernier mot = nom, le reste
+  // = prénom (un seul mot → traité comme nom, l'index principal de WikiTree).
+  function splitNameQuery(q) {
+    var parts = q.split(/\s+/);
+    if (parts.length === 1) return { fn: '', ln: parts[0] };
+    return { fn: parts.slice(0, -1).join(' '), ln: parts[parts.length - 1] };
+  }
+
   function runOnlineSearch() {
-    // Recherche GLOBALE : un seul champ. Dernier mot = nom, le reste = prénom
-    // (un seul mot → traité comme nom, l'index principal de WikiTree).
     var q = ($('#wtQuery').value || '').trim();
     if (!q) { wtStatus.textContent = 'Saisis un nom (ou « prénom nom »).'; return; }
-    var parts = q.split(/\s+/);
-    var fn = '', ln = '';
-    if (parts.length === 1) { ln = parts[0]; }
-    else { ln = parts[parts.length - 1]; fn = parts.slice(0, -1).join(' '); }
+    var parsed = splitNameQuery(q);
+    var fn = parsed.fn, ln = parsed.ln;
     wtResults.innerHTML = '';
     wtBusy(true, 'Recherche en ligne…');
     var myGen = ++wtGen;
@@ -1857,12 +1888,17 @@
     try { runOnlineSearch(); } catch (e) { wtForceStop('Erreur interne : ' + e.message); }
   }
   $('#wtSearchBtn').addEventListener('click', triggerOnlineSearch);
+  $('#wtGeneanetBtn').addEventListener('click', function () {
+    var q = ($('#wtQuery').value || '').trim();
+    var parsed = q ? splitNameQuery(q) : { fn: '', ln: '' };
+    openExternal(geneanetSearchUrl(parsed.fn, parsed.ln));
+  });
   $('#wtClose').addEventListener('click', function () { onlineDlg.close(); });
   $('#wtQuery').addEventListener('keydown', function (e) { if (e.key === 'Enter') triggerOnlineSearch(); });
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.34';
+  var APP_VERSION = '1.4.35';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
