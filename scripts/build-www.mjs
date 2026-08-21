@@ -15,6 +15,8 @@ const assets = [
   'gedcom.js',
   'store.js',
   'tree.js',
+  'wikitree.js',
+  'insee.js',
   'sw.js',
   'manifest.webmanifest',
   'img',
