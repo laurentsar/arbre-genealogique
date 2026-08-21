@@ -1088,6 +1088,12 @@
   var wtStartTime = null;
   var inseeCurrentCtrl = null;
   var inseeStartTime = null;
+  // Compteurs de génération : si une recherche relancée rend l'ancienne
+  // obsolète, sa réponse (qui peut malgré tout finir par arriver bien plus
+  // tard, ex. après un blocage en arrière-plan) ne doit plus écraser
+  // l'affichage de la recherche courante.
+  var wtGen = 0;
+  var inseeGen = 0;
 
   // Historique des recherches en ligne (indépendant des données généalogiques :
   // clé localStorage séparée, jamais inclus dans les exports JSON/GEDCOM).
@@ -1220,7 +1226,9 @@
     else { ln = parts[parts.length - 1]; fn = parts.slice(0, -1).join(' '); }
     wtResults.innerHTML = '';
     wtBusy(true, 'Recherche en ligne…');
+    var myGen = ++wtGen;
     WikiTree.search(fn, ln, 25, function (ctrl) { wtCurrentCtrl = ctrl; }).then(function (matches) {
+      if (myGen !== wtGen) return; // recherche relancée entre-temps : réponse obsolète, ignorée
       wtBusy(false);
       logSearch(q, matches.length);
       // Notifie même si l'utilisateur a fermé la fenêtre entre-temps.
@@ -1247,6 +1255,7 @@
         wtResults.appendChild(li);
       });
     }).catch(function (err) {
+      if (myGen !== wtGen) return;
       wtBusy(false);
       if (err && err.name === 'AbortError') { wtStatus.textContent = 'Recherche annulée.'; return; }
       logSearch(q, null, err.message);
@@ -1257,18 +1266,29 @@
 
   $('#wtCancelBtn').addEventListener('click', function () {
     if (wtCurrentCtrl) wtCurrentCtrl.abort();
+    if (inseeCurrentCtrl) inseeCurrentCtrl.abort();
   });
 
   // Filet de secours contre le blocage Android : quand l'écran s'éteint ou
   // que l'appli passe en arrière-plan, le système suspend/retarde fortement
   // les setTimeout/setInterval — y compris celui des 30 s censé faire
   // échouer une recherche bloquée. Résultat observé : la recherche reste
-  // affichée "en cours" bien au-delà de 30 s (parfois plusieurs minutes),
-  // le minuteur n'ayant simplement pas eu l'occasion de s'exécuter. Dès que
-  // l'appli redevient visible, on vérifie nous-mêmes le temps réellement
-  // écoulé et on annule directement (ctrl.abort() est un appel synchrone,
-  // pas soumis au même throttling) plutôt que d'attendre que le minuteur en
-  // retard finisse par se déclencher.
+  // affichée "en cours" bien au-delà de 30 s (parfois plusieurs minutes,
+  // voire indéfiniment sur certains ROM comme MIUI/Xiaomi qui gèlent
+  // agressivement la WebView en arrière-plan), le minuteur n'ayant tout
+  // simplement pas eu l'occasion de s'exécuter à temps. Dès qu'on détecte
+  // un retour au premier plan — par n'importe quel signal disponible — on
+  // vérifie nous-mêmes le temps réellement écoulé et on annule directement
+  // (ctrl.abort() est un appel synchrone, pas soumis au même throttling)
+  // plutôt que d'attendre que le minuteur en retard finisse par se
+  // déclencher. Plusieurs signaux sont écoutés en parallèle car aucun n'est
+  // fiable à 100 % seul selon le ROM/la version d'Android :
+  //  - visibilitychange / focus (API web standard, WebView) ;
+  //  - resume du plugin natif @capacitor/app (cycle de vie Android natif
+  //    onResume, généralement plus fiable que les événements WebView sur
+  //    les ROM avec gestion agressive de l'arrière-plan) ;
+  //  - toute interaction de l'utilisateur avec le dialogue de recherche
+  //    (dernier recours garanti : dès qu'il retouche l'écran, on nettoie).
   function checkStaleSearches() {
     var now = Date.now();
     if (wtCurrentCtrl && wtStartTime && (now - wtStartTime) >= SEARCH_TIMEOUT_MS) wtCurrentCtrl.abort();
@@ -1278,6 +1298,10 @@
     if (document.visibilityState === 'visible') checkStaleSearches();
   });
   window.addEventListener('focus', checkStaleSearches);
+  onlineDlg.addEventListener('click', checkStaleSearches);
+  if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
+    window.Capacitor.Plugins.App.addListener('resume', checkStaleSearches);
+  }
 
   function fmtInsee(f) {
     var name = ((f.prenom || '') + ' ' + (f.nom || '')).trim();
@@ -1317,7 +1341,9 @@
       inseeCurrentCtrl = null; inseeStartTime = null;
     }
     var year = (p.naissance && p.naissance.date) ? p.naissance.date.slice(0, 4) : '';
+    var myGen = ++inseeGen;
     InseeDeces.search(p.prenom, p.nom, year, function (ctrl) { inseeCurrentCtrl = ctrl; }).then(function (matches) {
+      if (myGen !== inseeGen) return;
       stop();
       var name = Store.fullName(p);
       toast('INSEE (décès) : ' + matches.length + ' résultat(s) pour « ' + name + ' »' +
@@ -1340,6 +1366,7 @@
         inseeResults.appendChild(li);
       });
     }).catch(function (err) {
+      if (myGen !== inseeGen) return;
       stop();
       inseeStatus.textContent = 'Fichier des décès indisponible : ' + err.message;
     });
@@ -1709,7 +1736,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.25';
+  var APP_VERSION = '1.4.26';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
