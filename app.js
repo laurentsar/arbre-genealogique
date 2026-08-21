@@ -1131,8 +1131,14 @@
     });
   }
 
+  // Durée du filet de sécurité côté wikitree.js/insee.js (Promise.race) : sert
+  // ici à donner une barre de progression DÉTERMINÉE plutôt qu'un spinner
+  // indéfini — l'utilisateur voit combien de temps il reste avant l'échec.
+  var SEARCH_TIMEOUT_MS = 30000;
+
   // Indicateur d'avancement de la recherche en ligne (elle peut être lente) :
-  // spinner + compteur de secondes, bouton désactivé le temps de l'appel.
+  // spinner + compteur de secondes + barre de progression, bouton désactivé
+  // le temps de l'appel.
   function wtBusy(on, label) {
     var btn = $('#wtSearchBtn');
     if (btn) btn.disabled = on;
@@ -1140,14 +1146,20 @@
     if (cancelBtn) cancelBtn.classList.toggle('hidden', !on);
     if (!on) wtCurrentCtrl = null;
     if (wtTimer) { clearInterval(wtTimer); wtTimer = null; }
+    var progressEl = $('#wtProgress');
     if (on) {
+      if (progressEl) { progressEl.classList.remove('hidden'); progressEl.value = 0; }
       var t0 = Date.now();
       var draw = function () {
-        var s = Math.floor((Date.now() - t0) / 1000);
+        var elapsed = Date.now() - t0;
+        var s = Math.floor(elapsed / 1000);
         wtStatus.innerHTML = '<span class="spinner"></span> ' + escapeHtml(label) + ' (' + s + ' s)';
+        if (progressEl) progressEl.value = Math.min(100, (elapsed / SEARCH_TIMEOUT_MS) * 100);
       };
       draw();
-      wtTimer = setInterval(draw, 500);
+      wtTimer = setInterval(draw, 300);
+    } else if (progressEl) {
+      progressEl.classList.add('hidden');
     }
   }
 
@@ -1256,14 +1268,32 @@
   // ciblée, en complément de WikiTree — ne sert qu'à COMPLÉTER/CONFIRMER
   // (pas de parents/enfants dans cette source). Échec réseau silencieux :
   // ne doit jamais bloquer ni polluer la recherche WikiTree en parallèle.
+  var inseeTimer = null;
   function searchInsee(p) {
     if (!inseeBox || !p || !p.nom) { if (inseeBox) inseeBox.classList.add('hidden'); return; }
+    var progressEl = $('#inseeProgress');
     inseeBox.classList.remove('hidden');
     inseeResults.innerHTML = '';
-    inseeStatus.innerHTML = '<span class="spinner"></span> Recherche dans le Fichier des décès (INSEE)…';
+    if (inseeTimer) { clearInterval(inseeTimer); inseeTimer = null; }
+    if (progressEl) progressEl.value = 0;
+    var t0 = Date.now();
+    var draw = function () {
+      var elapsed = Date.now() - t0;
+      var s = Math.floor(elapsed / 1000);
+      inseeStatus.innerHTML = '<span class="spinner"></span> Recherche dans le Fichier des décès (INSEE)… (' + s + ' s)';
+      if (progressEl) progressEl.value = Math.min(100, (elapsed / SEARCH_TIMEOUT_MS) * 100);
+    };
+    if (progressEl) progressEl.classList.remove('hidden');
+    draw();
+    inseeTimer = setInterval(draw, 300);
+    function stop() { if (inseeTimer) { clearInterval(inseeTimer); inseeTimer = null; } if (progressEl) progressEl.classList.add('hidden'); }
     var year = (p.naissance && p.naissance.date) ? p.naissance.date.slice(0, 4) : '';
     InseeDeces.search(p.prenom, p.nom, year).then(function (matches) {
-      if (!matches.length) { inseeStatus.textContent = 'Aucun résultat dans le Fichier des décès.'; return; }
+      stop();
+      var name = Store.fullName(p);
+      toast('INSEE (décès) : ' + matches.length + ' résultat(s) pour « ' + name + ' »' +
+        (onlineDlg.open ? '' : ' — rouvre la recherche pour voir.'));
+      if (!matches.length) { inseeStatus.textContent = 'Aucun résultat dans le Fichier des décès pour « ' + name + ' ».'; return; }
       inseeStatus.textContent = matches.length + ' résultat(s) — actes d\'état civil :';
       matches.forEach(function (f) {
         var info = fmtInsee(f);
@@ -1281,6 +1311,7 @@
         inseeResults.appendChild(li);
       });
     }).catch(function (err) {
+      stop();
       inseeStatus.textContent = 'Fichier des décès indisponible : ' + err.message;
     });
   }
@@ -1649,7 +1680,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.23';
+  var APP_VERSION = '1.4.24';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

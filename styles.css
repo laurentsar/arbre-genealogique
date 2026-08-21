@@ -307,6 +307,13 @@ dialog h2 { margin-top: 0; font-size: 1.05rem; }
   border-radius: 50%; animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+.search-progress {
+  display: block; width: 100%; height: 6px; margin-top: 8px;
+  border: none; border-radius: 3px; overflow: hidden; background: var(--surface-2);
+}
+.search-progress::-webkit-progress-bar { background: var(--surface-2); border-radius: 3px; }
+.search-progress::-webkit-progress-value { background: var(--accent); border-radius: 3px; transition: width 0.2s linear; }
+.search-progress::-moz-progress-bar { background: var(--accent); border-radius: 3px; }
 .chip-name { cursor: pointer; }
 .chip-x {
   border: none; background: transparent; color: var(--muted);
