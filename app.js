@@ -1172,6 +1172,16 @@
       wtStartTime = t0;
       var draw = function () {
         var elapsed = Date.now() - t0;
+        // Constaté sur appareil réel : le setTimeout indépendant posé dans
+        // wikitree.js/insee.js (pourtant identique en principe) ne se
+        // déclenche pas de façon fiable en production, alors que CE minuteur
+        // (celui qui affiche le compteur de secondes) continue, lui,
+        // d'avancer normalement jusqu'à 35+ s et au-delà — vérifié sur
+        // plusieurs captures d'écran successives. Plutôt que de chercher à
+        // comprendre pourquoi deux minuteurs a priori équivalents divergent,
+        // on fait reposer l'arrêt forcé sur CELUI dont la fiabilité est
+        // démontrée, ici, sur cet appareil précis.
+        if (elapsed >= SEARCH_TIMEOUT_MS) { wtForceStop('Délai dépassé — réessaie.'); return; }
         var s = Math.floor(elapsed / 1000);
         wtStatus.innerHTML = '<span class="spinner"></span> ' + escapeHtml(label) + ' (' + s + ' s, ' + transportTag() + ')';
         if (progressEl) progressEl.value = Math.min(100, (elapsed / SEARCH_TIMEOUT_MS) * 100);
@@ -1367,6 +1377,7 @@
     inseeStartTime = t0;
     var draw = function () {
       var elapsed = Date.now() - t0;
+      if (elapsed >= SEARCH_TIMEOUT_MS) { inseeForceStop('Délai dépassé — réessaie.'); return; }
       var s = Math.floor(elapsed / 1000);
       inseeStatus.innerHTML = '<span class="spinner"></span> Recherche dans le Fichier des décès (INSEE)… (' + s + ' s, ' + transportTag() + ')';
       if (progressEl) progressEl.value = Math.min(100, (elapsed / SEARCH_TIMEOUT_MS) * 100);
@@ -1775,7 +1786,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.28';
+  var APP_VERSION = '1.4.29';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
