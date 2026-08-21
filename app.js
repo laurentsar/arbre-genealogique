@@ -1296,11 +1296,19 @@
       // Notifie même si l'utilisateur a fermé la fenêtre entre-temps.
       toast('WikiTree : ' + matches.length + ' résultat(s) pour « ' + q + ' »' +
         (onlineDlg.open ? '' : ' — rouvre « Rechercher en ligne » pour choisir.'));
-      if (!matches.length) { wtStatus.textContent = 'Aucun résultat.'; return; }
       var completing = !!wtTargetId;
-      wtStatus.textContent = matches.length + ' résultat(s). ' +
+      // En mode « compléter cette fiche », les correspondances déjà écartées
+      // par l'utilisateur pour CETTE personne ne sont plus reproposées.
+      var visibleMatches = completing
+        ? matches.filter(function (m) { return rejectedKeysFor(wtTargetId).indexOf('wt:' + m.Name) === -1; })
+        : matches;
+      if (!visibleMatches.length) {
+        wtStatus.textContent = matches.length ? 'Aucun résultat (les autres ont été écartés pour cette fiche).' : 'Aucun résultat.';
+        return;
+      }
+      wtStatus.textContent = visibleMatches.length + ' résultat(s). ' +
         (completing ? 'Choisissez la correspondance pour compléter cette fiche :' : 'Choisissez qui importer :');
-      matches.forEach(function (m) {
+      visibleMatches.forEach(function (m) {
         var info = fmtMatch(m);
         var gains = (completing && state.persons[wtTargetId]) ? fieldGains(state.persons[wtTargetId], WikiTree.toFields(m)) : [];
         var li = document.createElement('li');
@@ -1309,10 +1317,16 @@
           '<div class="person-line-name">' + escapeHtml(info.name) + '</div>' +
           '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div>' +
           gainsHTML(gains) + '</div>' +
-          '<button class="btn btn-sm btn-accent" type="button">' + (completing ? 'Compléter' : 'Importer') + '</button>';
-        li.querySelector('button').addEventListener('click', function () {
+          '<button class="btn btn-sm btn-accent" type="button" data-role="complete">' + (completing ? 'Compléter' : 'Importer') + '</button>' +
+          (completing ? '<button class="btn btn-sm btn-ghost" type="button" data-role="dismiss" title="Ne plus proposer cette correspondance pour cette fiche">✕</button>' : '');
+        li.querySelector('[data-role="complete"]').addEventListener('click', function () {
           if (wtTargetId) completeInto(m.Name, li, wtTargetId);
           else importFromWikiTree(m.Name, li);
+        });
+        var dismissBtn = li.querySelector('[data-role="dismiss"]');
+        if (dismissBtn) dismissBtn.addEventListener('click', function () {
+          addRejected(wtTargetId, 'wt:' + m.Name);
+          li.remove();
         });
         wtResults.appendChild(li);
       });
@@ -1440,9 +1454,18 @@
       var name = Store.fullName(p);
       toast('INSEE (décès) : ' + matches.length + ' résultat(s) pour « ' + name + ' »' +
         (onlineDlg.open ? '' : ' — rouvre la recherche pour voir.'));
-      if (!matches.length) { inseeStatus.textContent = 'Aucun résultat dans le Fichier des décès pour « ' + name + ' ».'; return; }
-      inseeStatus.textContent = matches.length + ' résultat(s) — actes d\'état civil :';
-      matches.forEach(function (f) {
+      // Les correspondances déjà écartées par l'utilisateur pour CETTE
+      // personne ne sont plus reproposées.
+      var rejected = rejectedKeysFor(p.id);
+      var visibleMatches = matches.filter(function (f) { return rejected.indexOf('insee:' + f.id) === -1; });
+      if (!visibleMatches.length) {
+        inseeStatus.textContent = matches.length
+          ? 'Aucun résultat (les autres ont été écartés pour cette fiche).'
+          : 'Aucun résultat dans le Fichier des décès pour « ' + name + ' ».';
+        return;
+      }
+      inseeStatus.textContent = visibleMatches.length + ' résultat(s) — actes d\'état civil :';
+      visibleMatches.forEach(function (f) {
         var info = fmtInsee(f);
         var gains = fieldGains(p, f);
         var li = document.createElement('li');
@@ -1451,9 +1474,14 @@
           '<div class="person-line-name">' + escapeHtml(info.name) + '</div>' +
           '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div>' +
           gainsHTML(gains) + '</div>' +
-          '<button class="btn btn-sm btn-accent" type="button">Compléter</button>';
-        li.querySelector('button').addEventListener('click', function () {
+          '<button class="btn btn-sm btn-accent" type="button" data-role="complete">Compléter</button>' +
+          '<button class="btn btn-sm btn-ghost" type="button" data-role="dismiss" title="Ne plus proposer cette correspondance pour cette fiche">✕</button>';
+        li.querySelector('[data-role="complete"]').addEventListener('click', function () {
           completeIntoInsee(f, li, p.id);
+        });
+        li.querySelector('[data-role="dismiss"]').addEventListener('click', function () {
+          addRejected(p.id, 'insee:' + f.id);
+          li.remove();
         });
         inseeResults.appendChild(li);
       });
@@ -1467,7 +1495,7 @@
   // Complète la fiche ciblée avec un résultat INSEE (mêmes règles que
   // completeInto : on ne remplace jamais un champ déjà renseigné).
   function completeIntoInsee(f, li, targetId) {
-    var btn = li.querySelector('button');
+    var btn = li.querySelector('[data-role="complete"]');
     btn.disabled = true; btn.textContent = '…';
     var target = state.persons[targetId];
     if (!target) return;
@@ -1487,7 +1515,7 @@
     Store.save(state);
     refreshAll();
     toast('✓ Fiche complétée depuis le Fichier des décès (INSEE) : ' + Store.fullName(target));
-    btn.textContent = '✓ Complété';
+    li.remove();
     openDetail(target.id);
   }
 
@@ -1540,8 +1568,8 @@
       refreshAll();
       wtBusy(false);
       wtStatus.textContent = 'Importé : ' + Store.fullName(main) + (withRel ? ' (avec ses proches)' : '') + '. Vue recentrée.';
-      btn.textContent = '✓ Importé';
       toast('✓ Importé depuis WikiTree : ' + Store.fullName(main));
+      li.remove();
     }).catch(function (err) {
       wtBusy(false);
       btn.disabled = false; btn.textContent = 'Importer';
@@ -1654,9 +1682,11 @@
       .slice(0, limit);
   }
 
-  // Correspondances écartées par l'utilisateur (« Signaler incohérence »),
-  // par personne : on ne les represente plus jamais tant qu'on ne trouve pas
-  // autre chose. Clé séparée, jamais incluse dans les exports.
+  // Correspondances écartées par l'utilisateur (« Signaler incohérence », ou
+  // le bouton ✕ « ne plus proposer » d'une recherche individuelle), par
+  // personne : on ne les représente plus jamais tant qu'on ne trouve pas
+  // autre chose. Clés préfixées par source ('wt:'/'insee:') pour partager le
+  // même stockage sans collision. Clé séparée, jamais incluse dans les exports.
   var WT_REJECTED_KEY = 'genealogie:wtRejected:v1';
   function loadRejected() {
     try { return JSON.parse(localStorage.getItem(WT_REJECTED_KEY)) || {}; } catch (e) { return {}; }
@@ -1832,7 +1862,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.32';
+  var APP_VERSION = '1.4.33';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

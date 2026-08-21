@@ -72,6 +72,7 @@
     var bCity = Array.isArray(bLoc.city) ? bLoc.city[0] : bLoc.city;
     var dCity = Array.isArray(dLoc.city) ? dLoc.city[0] : dLoc.city;
     return {
+      id: p.id || '', // identifiant stable du profil source (sert à mémoriser un rejet par personne)
       prenom: (p.name && p.name.first && p.name.first[0]) || '',
       nom: (p.name && p.name.last) || '',
       sexe: sex,
