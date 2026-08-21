@@ -1085,6 +1085,9 @@
   var wtTargetId = null;
   var wtTimer = null;
   var wtCurrentCtrl = null; // AbortController de la recherche en cours, pour le bouton Annuler
+  var wtStartTime = null;
+  var inseeCurrentCtrl = null;
+  var inseeStartTime = null;
 
   // Historique des recherches en ligne (indépendant des données généalogiques :
   // clé localStorage séparée, jamais inclus dans les exports JSON/GEDCOM).
@@ -1144,12 +1147,13 @@
     if (btn) btn.disabled = on;
     var cancelBtn = $('#wtCancelBtn');
     if (cancelBtn) cancelBtn.classList.toggle('hidden', !on);
-    if (!on) wtCurrentCtrl = null;
+    if (!on) { wtCurrentCtrl = null; wtStartTime = null; }
     if (wtTimer) { clearInterval(wtTimer); wtTimer = null; }
     var progressEl = $('#wtProgress');
     if (on) {
       if (progressEl) { progressEl.classList.remove('hidden'); progressEl.value = 0; }
       var t0 = Date.now();
+      wtStartTime = t0;
       var draw = function () {
         var elapsed = Date.now() - t0;
         var s = Math.floor(elapsed / 1000);
@@ -1255,6 +1259,26 @@
     if (wtCurrentCtrl) wtCurrentCtrl.abort();
   });
 
+  // Filet de secours contre le blocage Android : quand l'écran s'éteint ou
+  // que l'appli passe en arrière-plan, le système suspend/retarde fortement
+  // les setTimeout/setInterval — y compris celui des 30 s censé faire
+  // échouer une recherche bloquée. Résultat observé : la recherche reste
+  // affichée "en cours" bien au-delà de 30 s (parfois plusieurs minutes),
+  // le minuteur n'ayant simplement pas eu l'occasion de s'exécuter. Dès que
+  // l'appli redevient visible, on vérifie nous-mêmes le temps réellement
+  // écoulé et on annule directement (ctrl.abort() est un appel synchrone,
+  // pas soumis au même throttling) plutôt que d'attendre que le minuteur en
+  // retard finisse par se déclencher.
+  function checkStaleSearches() {
+    var now = Date.now();
+    if (wtCurrentCtrl && wtStartTime && (now - wtStartTime) >= SEARCH_TIMEOUT_MS) wtCurrentCtrl.abort();
+    if (inseeCurrentCtrl && inseeStartTime && (now - inseeStartTime) >= SEARCH_TIMEOUT_MS) inseeCurrentCtrl.abort();
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') checkStaleSearches();
+  });
+  window.addEventListener('focus', checkStaleSearches);
+
   function fmtInsee(f) {
     var name = ((f.prenom || '') + ' ' + (f.nom || '')).trim();
     var b = f.naissance.date ? f.naissance.date.slice(0, 4) : '';
@@ -1277,6 +1301,7 @@
     if (inseeTimer) { clearInterval(inseeTimer); inseeTimer = null; }
     if (progressEl) progressEl.value = 0;
     var t0 = Date.now();
+    inseeStartTime = t0;
     var draw = function () {
       var elapsed = Date.now() - t0;
       var s = Math.floor(elapsed / 1000);
@@ -1286,9 +1311,13 @@
     if (progressEl) progressEl.classList.remove('hidden');
     draw();
     inseeTimer = setInterval(draw, 300);
-    function stop() { if (inseeTimer) { clearInterval(inseeTimer); inseeTimer = null; } if (progressEl) progressEl.classList.add('hidden'); }
+    function stop() {
+      if (inseeTimer) { clearInterval(inseeTimer); inseeTimer = null; }
+      if (progressEl) progressEl.classList.add('hidden');
+      inseeCurrentCtrl = null; inseeStartTime = null;
+    }
     var year = (p.naissance && p.naissance.date) ? p.naissance.date.slice(0, 4) : '';
-    InseeDeces.search(p.prenom, p.nom, year).then(function (matches) {
+    InseeDeces.search(p.prenom, p.nom, year, function (ctrl) { inseeCurrentCtrl = ctrl; }).then(function (matches) {
       stop();
       var name = Store.fullName(p);
       toast('INSEE (décès) : ' + matches.length + ' résultat(s) pour « ' + name + ' »' +
@@ -1680,7 +1709,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.24';
+  var APP_VERSION = '1.4.25';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

@@ -1,6 +1,6 @@
 {
   "name": "arbre-genealogique",
-  "version": "1.4.24",
+  "version": "1.4.25",
   "private": true,
   "type": "module",
   "description": "Application indépendante de gestion d'arbre généalogique (GEDCOM, ascendants/descendants).",
