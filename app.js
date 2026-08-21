@@ -1409,7 +1409,10 @@
   // parallèle max) et ne retient qu'une correspondance non ambiguë (voir
   // pickBestMatch) — sinon on ignore silencieusement : mieux vaut rater une
   // suggestion que proposer un mauvais rapprochement.
-  function scanOnlineSuggestions(persons, onProgress) {
+  // onResult(item) est appelé DÈS qu'une correspondance est trouvée (pas
+  // besoin d'attendre la fin du lot pour voir les premiers résultats — un
+  // lot de 10 recherches peut prendre du temps si l'une d'elles traîne).
+  function scanOnlineSuggestions(persons, onProgress, onResult) {
     var CONCURRENCY = 3;
     var results = [];
     var idx = 0, done = 0;
@@ -1419,7 +1422,11 @@
         var p = persons[idx++];
         WikiTree.search(p.prenom || '', p.nom || '', 5).then(function (matches) {
           var best = pickBestMatch(p, matches, rejectedKeysFor(p.id));
-          if (best) results.push({ personId: p.id, match: best });
+          if (best) {
+            var item = { personId: p.id, match: best };
+            results.push(item);
+            if (onResult) onResult(item);
+          }
         }).catch(function () { /* recherche individuelle ratée : on l'ignore, ce n'est qu'une suggestion */ })
           .then(function () {
             done++;
@@ -1486,30 +1493,36 @@
     });
   }
 
-  function renderOnlineSuggestions(list) {
-    var ul = $('#onlineSuggestList');
-    ul.innerHTML = '';
-    list.forEach(function (item) {
-      var li = buildSuggestionRow(item);
-      if (li) ul.appendChild(li);
-    });
-  }
-
   function findOnlineSuggestions() {
     var btn = $('#btnFindOnlineSuggestions');
     var status = $('#onlineSuggestStatus');
+    var listEl = $('#onlineSuggestList');
     var candidates = candidatesForOnlineMatch(10);
     if (!candidates.length) { status.textContent = 'Toutes les fiches ont déjà un lien WikiTree (ou aucune personne à vérifier).'; return; }
     btn.disabled = true;
-    $('#onlineSuggestList').innerHTML = '';
-    status.innerHTML = '<span class="spinner"></span> Vérification de ' + candidates.length + ' fiche(s)… (0/' + candidates.length + ')';
-    scanOnlineSuggestions(candidates, function (done, total) {
-      status.innerHTML = '<span class="spinner"></span> Vérification de ' + total + ' fiche(s)… (' + done + '/' + total + ')';
+    listEl.innerHTML = '';
+    var found = 0, doneCount = 0;
+    function drawStatus() {
+      status.innerHTML = '<span class="spinner"></span> Vérification de ' + candidates.length + ' fiche(s)… (' + doneCount + '/' + candidates.length + ')' +
+        (found ? ' — ' + found + ' trouvée(s) pour l’instant' : '');
+    }
+    drawStatus();
+    scanOnlineSuggestions(candidates, function (done) {
+      doneCount = done;
+      drawStatus();
+    }, function (item) {
+      // Affiché dès qu'une correspondance est trouvée, sans attendre la fin
+      // du lot — une recherche peut mettre jusqu'à 30 s (timeout), pas
+      // question de faire attendre pour les résultats déjà là.
+      found++;
+      var li = buildSuggestionRow(item);
+      if (li) listEl.appendChild(li);
+      drawStatus();
     }).then(function (results) {
       btn.disabled = false;
-      if (!results.length) { status.textContent = 'Aucune correspondance non ambiguë trouvée sur ' + candidates.length + ' fiche(s) vérifiée(s).'; return; }
-      status.textContent = results.length + ' correspondance(s) suggérée(s) sur ' + candidates.length + ' fiche(s) vérifiée(s) :';
-      renderOnlineSuggestions(results);
+      status.textContent = results.length
+        ? results.length + ' correspondance(s) suggérée(s) sur ' + candidates.length + ' fiche(s) vérifiée(s).'
+        : 'Aucune correspondance non ambiguë trouvée sur ' + candidates.length + ' fiche(s) vérifiée(s).';
     });
   }
 
@@ -1523,7 +1536,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.17';
+  var APP_VERSION = '1.4.18';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
