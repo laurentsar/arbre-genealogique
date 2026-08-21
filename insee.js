@@ -9,9 +9,31 @@
   var API = 'https://deces.matchid.io/deces/api/v1/search';
 
   function get(params, onController) {
-    var qs = Object.keys(params)
-      .filter(function (k) { return params[k] !== undefined && params[k] !== ''; })
-      .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); })
+    var cleanParams = {};
+    Object.keys(params).forEach(function (k) {
+      if (params[k] !== undefined && params[k] !== '') cleanParams[k] = params[k];
+    });
+    var Cap = typeof window !== 'undefined' ? window.Capacitor : undefined;
+    var isNative = !!(Cap && Cap.isNativePlatform && Cap.isNativePlatform() && Cap.Plugins && Cap.Plugins.CapacitorHttp);
+    if (isNative) {
+      // Appel natif direct : timeout appliqué côté natif (OkHttp), pas côté
+      // JS/WebView — voir wikitree.js pour le détail du problème contourné
+      // (fetch() patché pouvant se bloquer indéfiniment sur certains ROM).
+      var aborted = false;
+      if (onController) onController({ abort: function () { aborted = true; } });
+      return Cap.Plugins.CapacitorHttp.get({
+        url: API,
+        params: cleanParams,
+        connectTimeout: 10000,
+        readTimeout: 15000
+      }).then(function (res) {
+        if (aborted) { var e = new Error('Annulé'); e.name = 'AbortError'; throw e; }
+        if (res.status && (res.status < 200 || res.status >= 300)) throw new Error('INSEE HTTP ' + res.status);
+        return res.data;
+      });
+    }
+    var qs = Object.keys(cleanParams)
+      .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(cleanParams[k]); })
       .join('&');
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     if (onController) onController(ctrl);

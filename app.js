@@ -1264,9 +1264,30 @@
     });
   }
 
+  // Force la fin de l'état "en cours", QUOI QU'IL ARRIVE côté réseau : on ne
+  // dépend plus de ce que fait ctrl.abort() ni de si/quand la promesse en
+  // cours finit par se résoudre. Le compteur de génération est incrémenté
+  // pour que même une réponse tardive de l'ancienne requête (native, arrivée
+  // bien après) soit ignorée au lieu d'écraser cet état forcé.
+  function wtForceStop(msg) {
+    wtGen++;
+    wtBusy(false);
+    wtStatus.textContent = msg;
+  }
+  function inseeForceStop(msg) {
+    inseeGen++;
+    if (inseeTimer) { clearInterval(inseeTimer); inseeTimer = null; }
+    var progressEl = $('#inseeProgress');
+    if (progressEl) progressEl.classList.add('hidden');
+    inseeCurrentCtrl = null; inseeStartTime = null;
+    inseeStatus.textContent = msg;
+  }
+
   $('#wtCancelBtn').addEventListener('click', function () {
     if (wtCurrentCtrl) wtCurrentCtrl.abort();
     if (inseeCurrentCtrl) inseeCurrentCtrl.abort();
+    wtForceStop('Recherche annulée.');
+    inseeForceStop('Recherche annulée.');
   });
 
   // Filet de secours contre le blocage Android : quand l'écran s'éteint ou
@@ -1278,11 +1299,13 @@
   // agressivement la WebView en arrière-plan), le minuteur n'ayant tout
   // simplement pas eu l'occasion de s'exécuter à temps. Dès qu'on détecte
   // un retour au premier plan — par n'importe quel signal disponible — on
-  // vérifie nous-mêmes le temps réellement écoulé et on annule directement
-  // (ctrl.abort() est un appel synchrone, pas soumis au même throttling)
-  // plutôt que d'attendre que le minuteur en retard finisse par se
-  // déclencher. Plusieurs signaux sont écoutés en parallèle car aucun n'est
-  // fiable à 100 % seul selon le ROM/la version d'Android :
+  // vérifie nous-mêmes le temps réellement écoulé et on force l'arrêt
+  // immédiatement (wtForceStop/inseeForceStop : mise à jour d'UI synchrone,
+  // pas soumise au même throttling, et qui ne DÉPEND PAS de ce que fait le
+  // réseau derrière) plutôt que d'attendre que le minuteur en retard — ou le
+  // réseau lui-même — finisse par se déclencher. Plusieurs signaux sont
+  // écoutés en parallèle car aucun n'est fiable à 100 % seul selon le
+  // ROM/la version d'Android :
   //  - visibilitychange / focus (API web standard, WebView) ;
   //  - resume du plugin natif @capacitor/app (cycle de vie Android natif
   //    onResume, généralement plus fiable que les événements WebView sur
@@ -1291,8 +1314,14 @@
   //    (dernier recours garanti : dès qu'il retouche l'écran, on nettoie).
   function checkStaleSearches() {
     var now = Date.now();
-    if (wtCurrentCtrl && wtStartTime && (now - wtStartTime) >= SEARCH_TIMEOUT_MS) wtCurrentCtrl.abort();
-    if (inseeCurrentCtrl && inseeStartTime && (now - inseeStartTime) >= SEARCH_TIMEOUT_MS) inseeCurrentCtrl.abort();
+    if (wtCurrentCtrl && wtStartTime && (now - wtStartTime) >= SEARCH_TIMEOUT_MS) {
+      wtCurrentCtrl.abort();
+      wtForceStop('Délai dépassé — réessaie.');
+    }
+    if (inseeCurrentCtrl && inseeStartTime && (now - inseeStartTime) >= SEARCH_TIMEOUT_MS) {
+      inseeCurrentCtrl.abort();
+      inseeForceStop('Délai dépassé — réessaie.');
+    }
   }
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') checkStaleSearches();
@@ -1736,7 +1765,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.26';
+  var APP_VERSION = '1.4.27';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

@@ -12,13 +12,39 @@
     'IsLiving', 'Father', 'Mother'
   ].join(',');
 
-  // onController(ctrl), s'il est fourni, reçoit l'AbortController dès sa
+  // onController(ctrl), s'il est fourni, reçoit un objet { abort() } dès sa
   // création — permet à l'appelant d'annuler la requête en cours (bouton
   // « Annuler » pendant une recherche lente) sans changer la forme de la
   // promesse renvoyée.
   function get(params, onController) {
     params.appId = APP_ID;
     params.format = 'json';
+    var Cap = typeof window !== 'undefined' ? window.Capacitor : undefined;
+    var isNative = !!(Cap && Cap.isNativePlatform && Cap.isNativePlatform() && Cap.Plugins && Cap.Plugins.CapacitorHttp);
+    if (isNative) {
+      // Appel natif DIRECT (plugin CapacitorHttp), plutôt que le fetch()
+      // patché : ce dernier fait passer les requêtes GET par un contournement
+      // WebView d'un bug Chromium (réécriture d'URL + interception) qui peut
+      // se bloquer indéfiniment sans jamais déclencher de minuteur JS de
+      // secours (observé en usage réel : recherche restée bloquée plusieurs
+      // minutes). L'appel natif applique un timeout CÔTÉ NATIF (OkHttp),
+      // indépendant du thread JS/WebView — il aboutit donc même si la
+      // WebView est gelée en arrière-plan (constaté sur certains ROM comme
+      // MIUI/Xiaomi qui gèlent agressivement la WebView).
+      var aborted = false;
+      if (onController) onController({ abort: function () { aborted = true; } });
+      return Cap.Plugins.CapacitorHttp.get({
+        url: API,
+        params: params,
+        connectTimeout: 10000,
+        readTimeout: 15000
+      }).then(function (res) {
+        if (aborted) { var e = new Error('Annulé'); e.name = 'AbortError'; throw e; }
+        if (res.status && (res.status < 200 || res.status >= 300)) throw new Error('WikiTree HTTP ' + res.status);
+        return res.data;
+      });
+    }
+    // Web / dev : fetch() classique + filet Promise.race indépendant.
     var qs = Object.keys(params).map(function (k) {
       return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
     }).join('&');
@@ -31,12 +57,6 @@
         if (!r.ok) throw new Error('WikiTree HTTP ' + r.status);
         return r.json();
       });
-    // Timeout garanti par Promise.race (pas seulement par AbortController) :
-    // dans l'app Android, les requêtes passent par le pont natif CapacitorHttp
-    // (contourne l'absence de CORS de l'API WikiTree — vérifié : elle ne
-    // renvoie jamais d'en-tête Access-Control-Allow-Origin), qui ne respecte
-    // pas toujours le signal d'abandon. Sans ce filet, une réponse lente ou
-    // bloquée laissait la recherche tourner indéfiniment sans jamais aboutir.
     var timeoutPromise = new Promise(function (resolve, reject) {
       setTimeout(function () {
         if (ctrl) ctrl.abort();
