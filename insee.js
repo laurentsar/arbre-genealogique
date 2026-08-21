@@ -10,8 +10,14 @@
 
   function get(params, onController) {
     var cleanParams = {};
+    // Toujours des chaînes : le pont natif CapacitorHttp attend des params
+    // de type Record<string,string> — une valeur numérique (ex. size:15)
+    // peut échouer silencieusement à sa sérialisation et vider TOUS les
+    // params de la requête (constaté : la requête part alors sans aucun
+    // paramètre, l'API renvoie une erreur "empty request" sans le tableau
+    // "persons" attendu, lue par erreur comme "0 résultat").
     Object.keys(params).forEach(function (k) {
-      if (params[k] !== undefined && params[k] !== '') cleanParams[k] = params[k];
+      if (params[k] !== undefined && params[k] !== '') cleanParams[k] = String(params[k]);
     });
     var Cap = typeof window !== 'undefined' ? window.Capacitor : undefined;
     var isNative = !!(Cap && Cap.isNativePlatform && Cap.isNativePlatform() && Cap.Plugins && Cap.Plugins.CapacitorHttp);

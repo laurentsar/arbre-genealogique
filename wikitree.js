@@ -33,9 +33,17 @@
       // MIUI/Xiaomi qui gèlent agressivement la WebView).
       var aborted = false;
       if (onController) onController({ abort: function () { aborted = true; } });
+      // Toujours des chaînes : le pont natif attend des params de type
+      // Record<string,string> — une valeur numérique (ex. limit:20,
+      // getParents:1) peut échouer silencieusement à sa sérialisation et
+      // vider TOUS les params de la requête (constaté sur insee.js : la
+      // requête part alors sans aucun paramètre, l'API renvoie une erreur
+      // qu'on lit à tort comme "0 résultat").
+      var nativeParams = {};
+      Object.keys(params).forEach(function (k) { nativeParams[k] = String(params[k]); });
       var nativePromise = Cap.Plugins.CapacitorHttp.get({
         url: API,
-        params: params,
+        params: nativeParams,
         connectTimeout: 8000,
         readTimeout: 12000
       }).then(function (res) {
