@@ -386,8 +386,14 @@
       li.innerHTML = avatarHTML(p) +
         '<div style="flex:1 1 auto;min-width:0"><div class="person-line-name">' + escapeHtml(Store.fullName(p)) + '</div>' +
         '<div class="person-line-sub">' + escapeHtml(subLine(p)) + '</div></div>' +
+        '<button class="person-nav-btn" type="button" title="Rechercher cette personne en ligne (WikiTree)">🔍</button>' +
         '<button class="person-nav-btn" type="button" title="Voir dans l’arbre">🌳</button>';
-      li.querySelector('.person-nav-btn').addEventListener('click', function (e) {
+      var buttons = li.querySelectorAll('.person-nav-btn');
+      buttons[0].addEventListener('click', function (e) {
+        e.stopPropagation();
+        completeFromWikiTree(p.id);
+      });
+      buttons[1].addEventListener('click', function (e) {
         e.stopPropagation();
         viewInTree(p.id);
       });
@@ -1554,7 +1560,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.20';
+  var APP_VERSION = '1.4.21';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
