@@ -1222,8 +1222,20 @@
     wtResults.innerHTML = '';
     wtStatus.textContent = 'Recherche d’une correspondance pour « ' + Store.fullName(p) + ' »…';
     onlineDlg.showModal();
-    runOnlineSearch();
-    searchInsee(p);
+    // La section INSEE est rendue visible ICI, inconditionnellement, AVANT
+    // même d'appeler searchInsee() : si searchInsee() ne s'exécute jamais
+    // pour une raison imprévue, "En attente…" reste affiché au lieu que la
+    // section entière disparaisse silencieusement — un signal de diagnostic
+    // direct plutôt qu'une absence invisible.
+    if (inseeBox) { inseeBox.classList.remove('hidden'); }
+    if (inseeStatus) inseeStatus.textContent = 'En attente…';
+    if (inseeResults) inseeResults.innerHTML = '';
+    // Chaque source est isolée dans son propre try/catch : une exception
+    // inattendue dans l'une (ex. accès à un élément DOM absent) ne doit
+    // jamais empêcher l'autre de se lancer — les deux sont indépendantes
+    // et doivent le rester même en cas de bug imprévu dans l'une d'elles.
+    try { searchInsee(p); } catch (e) { inseeForceStop('Erreur interne : ' + e.message); }
+    try { runOnlineSearch(); } catch (e) { wtForceStop('Erreur interne : ' + e.message); }
   }
 
   function fmtMatch(m) {
@@ -1777,8 +1789,12 @@
   // l'ouverture automatique du dialogue et disparaît de fait dès qu'on
   // retape/relance la recherche soi-même.
   function triggerOnlineSearch() {
-    runOnlineSearch();
-    if (wtTargetId && state.persons[wtTargetId]) searchInsee(state.persons[wtTargetId]);
+    // Voir completeFromWikiTree : sources isolées, l'une ne doit jamais
+    // pouvoir empêcher l'autre de se lancer.
+    if (wtTargetId && state.persons[wtTargetId]) {
+      try { searchInsee(state.persons[wtTargetId]); } catch (e) { inseeForceStop('Erreur interne : ' + e.message); }
+    }
+    try { runOnlineSearch(); } catch (e) { wtForceStop('Erreur interne : ' + e.message); }
   }
   $('#wtSearchBtn').addEventListener('click', triggerOnlineSearch);
   $('#wtClose').addEventListener('click', function () { onlineDlg.close(); });
@@ -1786,7 +1802,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.29';
+  var APP_VERSION = '1.4.30';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
