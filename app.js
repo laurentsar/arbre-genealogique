@@ -156,23 +156,24 @@
     setTimeout(function () { t.classList.remove('show'); setTimeout(function () { t.remove(); }, 300); }, 6000);
   }
 
-  // Ouvre une URL externe (site tiers) dans le navigateur système/onglet
-  // in-app (@capacitor/browser), plutôt qu'une navigation dans la WebView de
-  // l'app elle-même (casserait la SPA) ou un window.open() peu fiable en
-  // WebView native sans ce plugin.
+  // Ouvre une URL externe (site tiers) dans une VRAIE fenêtre/tâche séparée,
+  // pas dans la WebView de l'app elle-même (casserait la SPA). Une vraie
+  // navigation d'ancre (pas window.open, pas le plugin Browser/Custom Tabs)
+  // est la voie standard Capacitor : toute navigation vers un domaine hors
+  // de l'app est déléguée par le pont natif au navigateur système comme
+  // application à part entière — avec sa propre entrée dans le multitâche
+  // Android — contrairement aux Custom Tabs (@capacitor/browser) qui
+  // restent rattachées à la tâche de l'app (pas de FLAG_ACTIVITY_NEW_TASK
+  // posé côté plugin : constaté dans son code source, ce qui explique
+  // pourquoi ça ne s'ouvrait pas dans une fenêtre vraiment séparée).
   function openExternal(url) {
-    var Cap = window.Capacitor;
-    if (Cap && Cap.isNativePlatform && Cap.isNativePlatform() && Cap.Plugins && Cap.Plugins.Browser) {
-      // .open() renvoie une promesse : si elle échoue silencieusement (pas
-      // d'app pour gérer l'intent, etc.), on retombe sur window.open() et,
-      // en dernier recours, on prévient plutôt que de rester muet.
-      Cap.Plugins.Browser.open({ url: url }).catch(function (err) {
-        try { window.open(url, '_blank', 'noopener'); } catch (e2) {}
-        toast('Impossible d’ouvrir le navigateur : ' + (err && err.message || err), 'error');
-      });
-    } else {
-      window.open(url, '_blank', 'noopener');
-    }
+    var a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 
   // Lien de recherche Geneanet pour une personne (pas d'API publique chez
@@ -1904,7 +1905,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.36';
+  var APP_VERSION = '1.4.37';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
