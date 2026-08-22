@@ -163,7 +163,13 @@
   function openExternal(url) {
     var Cap = window.Capacitor;
     if (Cap && Cap.isNativePlatform && Cap.isNativePlatform() && Cap.Plugins && Cap.Plugins.Browser) {
-      Cap.Plugins.Browser.open({ url: url });
+      // .open() renvoie une promesse : si elle échoue silencieusement (pas
+      // d'app pour gérer l'intent, etc.), on retombe sur window.open() et,
+      // en dernier recours, on prévient plutôt que de rester muet.
+      Cap.Plugins.Browser.open({ url: url }).catch(function (err) {
+        try { window.open(url, '_blank', 'noopener'); } catch (e2) {}
+        toast('Impossible d’ouvrir le navigateur : ' + (err && err.message || err), 'error');
+      });
     } else {
       window.open(url, '_blank', 'noopener');
     }
@@ -1898,7 +1904,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.35';
+  var APP_VERSION = '1.4.36';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
