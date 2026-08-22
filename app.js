@@ -179,12 +179,33 @@
   // Lien de recherche Geneanet pour une personne (pas d'API publique chez
   // Geneanet — contrairement à WikiTree/INSEE, ceci ouvre juste LEUR site
   // dans le navigateur, prérempli, plutôt que d'interroger une donnée dans
-  // l'app).
-  function geneanetSearchUrl(prenom, nom) {
+  // l'app). L'année de naissance (quand connue) réduit le nombre de
+  // résultats à filtrer soi-même côté Geneanet.
+  function geneanetSearchUrl(prenom, nom, anneeNaissance) {
     var params = 'go=1';
     if (nom) params += '&nom=' + encodeURIComponent(nom);
     if (prenom) params += '&prenom=' + encodeURIComponent(prenom);
+    if (anneeNaissance) params += '&naissance_annee=' + encodeURIComponent(anneeNaissance);
     return 'https://www.geneanet.org/fonds/individus/?' + params;
+  }
+
+  // Android ne permet à aucune app tierce de déclencher l'écran divisé par
+  // code (pas d'API publique pour ça sur un téléphone standard, en dehors
+  // du geste système « Applications récentes ») : on ne peut donc pas
+  // « activer » le multi-fenêtres depuis l'app, seulement l'expliquer, une
+  // seule fois, au moment où ça devient utile.
+  var GENEANET_TIP_KEY = 'genealogie:geneanetTipShown:v1';
+  function showGeneanetTipOnce() {
+    try {
+      if (localStorage.getItem(GENEANET_TIP_KEY)) return;
+      localStorage.setItem(GENEANET_TIP_KEY, '1');
+      toast('💡 Astuce : pour comparer côte à côte, ouvre les Applications récentes, maintiens l’icône de Geneanet, puis choisis « Écran divisé » et sélectionne Arbre généalogique.');
+    } catch (e) {}
+  }
+  function openGeneanetForPerson(p) {
+    var year = (p.naissance && p.naissance.date) ? p.naissance.date.slice(0, 4) : '';
+    openExternal(geneanetSearchUrl(p.prenom, p.nom, year));
+    showGeneanetTipOnce();
   }
 
   // Dans la WebView Android (app native), un lien <a download> sur une URL
@@ -445,6 +466,7 @@
         '<div style="flex:1 1 auto;min-width:0"><div class="person-line-name">' + escapeHtml(Store.fullName(p)) + '</div>' +
         '<div class="person-line-sub">' + escapeHtml(subLine(p)) + '</div></div>' +
         '<button class="person-nav-btn" type="button" title="Rechercher cette personne en ligne (WikiTree)">🔍</button>' +
+        '<button class="person-nav-btn" type="button" title="Chercher sur Geneanet">🌐</button>' +
         '<button class="person-nav-btn" type="button" title="Voir dans l’arbre">🌳</button>';
       var buttons = li.querySelectorAll('.person-nav-btn');
       buttons[0].addEventListener('click', function (e) {
@@ -452,6 +474,10 @@
         completeFromWikiTree(p.id);
       });
       buttons[1].addEventListener('click', function (e) {
+        e.stopPropagation();
+        openGeneanetForPerson(p);
+      });
+      buttons[2].addEventListener('click', function (e) {
         e.stopPropagation();
         viewInTree(p.id);
       });
@@ -942,7 +968,7 @@
     } else if (act === 'find-duplicates') {
       proposeMatch(personId, true);
     } else if (act === 'open-geneanet') {
-      openExternal(geneanetSearchUrl(p.prenom, p.nom));
+      openGeneanetForPerson(p);
     }
   }
 
@@ -1898,14 +1924,17 @@
   $('#wtGeneanetBtn').addEventListener('click', function () {
     var q = ($('#wtQuery').value || '').trim();
     var parsed = q ? splitNameQuery(q) : { fn: '', ln: '' };
-    openExternal(geneanetSearchUrl(parsed.fn, parsed.ln));
+    var target = wtTargetId ? state.persons[wtTargetId] : null;
+    var year = (target && target.naissance && target.naissance.date) ? target.naissance.date.slice(0, 4) : '';
+    openExternal(geneanetSearchUrl(parsed.fn, parsed.ln, year));
+    showGeneanetTipOnce();
   });
   $('#wtClose').addEventListener('click', function () { onlineDlg.close(); });
   $('#wtQuery').addEventListener('keydown', function (e) { if (e.key === 'Enter') triggerOnlineSearch(); });
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.37';
+  var APP_VERSION = '1.4.38';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
