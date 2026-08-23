@@ -367,6 +367,35 @@
     return m ? m[1] : '';
   }
 
+  // Âge calculé « quand possible » : à ce jour si vivant·e, à la date du
+  // décès si décédé·e ET que cette date est connue (décédé·e sans date de
+  // décès exploitable → pas d'âge fiable, renvoie null plutôt que deviner).
+  // Renvoie { age, atDeath } ou null. Mois/jour manquants → 1er du mois/de
+  // l'année (résultat approximatif mais raisonnable, pas de date invalide).
+  function parseDateParts(iso) {
+    var m = iso ? /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(iso) : null;
+    if (!m) return null;
+    return { y: +m[1], m: m[2] ? +m[2] : 1, d: m[3] ? +m[3] : 1 };
+  }
+  function computeAge(p) {
+    var birth = p.naissance ? parseDateParts(p.naissance.date) : null;
+    if (!birth) return null;
+    var end, atDeath = false;
+    if (p.decede) {
+      var death = p.deces ? parseDateParts(p.deces.date) : null;
+      if (!death) return null; // décédé·e mais date de décès inconnue : pas d'âge fiable
+      end = death;
+      atDeath = true;
+    } else {
+      var now = new Date();
+      end = { y: now.getFullYear(), m: now.getMonth() + 1, d: now.getDate() };
+    }
+    var age = end.y - birth.y;
+    if (end.m < birth.m || (end.m === birth.m && end.d < birth.d)) age--;
+    if (age < 0 || age > 130) return null; // garde-fou : dates incohérentes
+    return { age: age, atDeath: atDeath };
+  }
+
   // Score de rapprochement entre une personne entrante et une personne existante
   // DE MÊME NOM. Positif = c'est probablement la même ; négatif = probablement
   // deux personnes différentes (années de naissance/décès qui se contredisent).
@@ -774,6 +803,7 @@
     getChildren: getChildren,
     getSiblings: getSiblings,
     fullName: fullName,
+    computeAge: computeAge,
     allPersons: allPersons,
     searchPersons: searchPersons,
     exportJSON: exportJSON,

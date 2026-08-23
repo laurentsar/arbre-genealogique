@@ -30,6 +30,10 @@
     var b = p.naissance && p.naissance.date ? p.naissance.date.slice(0, 4) : '';
     var d = p.decede || (p.deces && p.deces.date) ? (p.deces && p.deces.date ? p.deces.date.slice(0, 4) : '✝') : '';
     var years = (b || d) ? (b + (d ? ' – ' + d : (p.decede ? ' – ✝' : ''))) : '';
+    // Âge quand calculable (voir Store.computeAge) : ajouté entre
+    // parenthèses à la suite des années, sans rien changer si indisponible.
+    var ageInfo = Store.computeAge(p);
+    if (ageInfo) years += (years ? ' ' : '') + '(' + ageInfo.age + ' ans)';
     return { name: name, years: years };
   }
 

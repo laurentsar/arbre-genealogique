@@ -93,8 +93,16 @@
     if (p.naissance && (p.naissance.date || p.naissance.lieu)) {
       parts.push('né(e) ' + [p.naissance.date ? 'le ' + formatDateFr(p.naissance.date) : '', p.naissance.lieu ? 'à ' + p.naissance.lieu : ''].filter(Boolean).join(' '));
     }
+    // Âge calculé quand possible (à ce jour si vivant·e, à la date du décès
+    // sinon) — voir Store.computeAge : renvoie null plutôt qu'un âge
+    // hasardeux si la date de décès manque pour une personne décédée.
+    var ageInfo = Store.computeAge(p);
     if (p.decede || (p.deces && (p.deces.date || p.deces.lieu))) {
-      parts.push('décédé(e) ' + [p.deces.date ? 'le ' + formatDateFr(p.deces.date) : '', p.deces.lieu ? 'à ' + p.deces.lieu : ''].filter(Boolean).join(' '));
+      var deathStr = 'décédé(e) ' + [p.deces.date ? 'le ' + formatDateFr(p.deces.date) : '', p.deces.lieu ? 'à ' + p.deces.lieu : ''].filter(Boolean).join(' ');
+      if (ageInfo && ageInfo.atDeath) deathStr += ' (' + ageInfo.age + ' ans)';
+      parts.push(deathStr);
+    } else if (ageInfo) {
+      parts.push(ageInfo.age + ' ans');
     }
     return parts.join(' · ');
   }
@@ -292,6 +300,29 @@
     if (name === 'settings') renderSettings();
   }
 
+  // Profondeur RÉELLE de générations disponibles (ascendants ou descendants
+  // selon le mode) à partir d'une racine — évite un curseur allant
+  // jusqu'à 7 générations par défaut alors que les données n'en contiennent
+  // que 2 ou 3. Protection anti-cycle par CHEMIN (pas un set global) pour ne
+  // pas sous-compter une branche légitime qui recroise un même ancêtre par
+  // un autre chemin (mariage entre cousins).
+  function realGenDepth(rootId, mode) {
+    var maxSeen = 0;
+    function rec(id, depth, path) {
+      if (!id) return;
+      maxSeen = Math.max(maxSeen, depth);
+      if (path[id]) return;
+      path[id] = true;
+      var nextIds = mode === 'descendants'
+        ? Store.getChildren(state, id).map(function (c) { return c.id; })
+        : (state.persons[id] ? (state.persons[id].parentIds || []) : []);
+      nextIds.forEach(function (nid) { rec(nid, depth + 1, path); });
+      delete path[id];
+    }
+    rec(rootId, 0, {});
+    return maxSeen;
+  }
+
   function renderTree() {
     var hasPersons = Object.keys(state.persons).length > 0;
     treeEmpty.classList.toggle('hidden', hasPersons);
@@ -302,6 +333,17 @@
     }
     if (!state.rootId || !state.persons[state.rootId]) state.rootId = Object.keys(state.persons)[0];
     var cr = currentRoot();
+
+    var genRangeEl = $('#genRange');
+    if (genRangeEl) {
+      var realDepth = Math.max(1, realGenDepth(cr, treeMode));
+      genRangeEl.max = realDepth;
+      if (maxGen > realDepth) maxGen = realDepth;
+      genRangeEl.value = maxGen;
+      var genValueEl = $('#genValue');
+      if (genValueEl) genValueEl.textContent = maxGen;
+    }
+
     panZoomCtl = Tree.render(treeSvg, state, { rootId: cr, mode: treeMode, maxGen: maxGen, onSelect: focusPerson, onOpen: openDetail });
     renderBreadcrumb();
     updateNav();
@@ -1234,13 +1276,15 @@
     if (!box) return;
     var list = loadSearchHistory();
     if (!list.length) { box.innerHTML = ''; return; }
-    var html = '<div class="detail-section"><h3>Recherches récentes</h3><div class="chip-row">';
+    // Repliée par défaut (<details> sans "open") : utile à retrouver, mais
+    // ne doit pas encombrer la fenêtre de recherche à chaque ouverture.
+    var html = '<details class="history-disclosure"><summary>Recherches récentes (' + list.length + ')</summary><div class="chip-row">';
     html += list.map(function (h) {
       var sub = h.error ? 'échec' : (h.count == null ? '' : h.count + ' résultat(s)');
       return '<span class="chip chip-name" data-history="' + escapeHtml(h.query) + '" title="' + escapeHtml(timeAgo(h.at) + (sub ? ' · ' + sub : '')) + '">' +
         escapeHtml(h.query) + '</span>';
     }).join('');
-    html += '</div></div>';
+    html += '</div></details>';
     box.innerHTML = html;
     $all('#wtHistoryBox [data-history]').forEach(function (el) {
       el.addEventListener('click', function () {
@@ -1954,7 +1998,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.39';
+  var APP_VERSION = '1.4.40';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

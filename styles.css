@@ -319,6 +319,16 @@ dialog h2 { margin-top: 0; font-size: 1.05rem; }
    retrait, pour que l'essentiel (ci-dessus) reste ce qui accroche l'œil. */
 .detail-section-muted { opacity: 0.82; }
 .detail-section-muted h3 { font-size: 0.78rem; }
+/* Historique de recherche : replié par défaut (<details> sans "open"). */
+.history-disclosure { margin: 10px 0; }
+.history-disclosure summary {
+  cursor: pointer; list-style: none; user-select: none;
+  font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
+}
+.history-disclosure summary::-webkit-details-marker { display: none; }
+.history-disclosure summary::before { content: '▸ '; display: inline-block; width: 0.9em; }
+.history-disclosure[open] summary::before { content: '▾ '; }
+.history-disclosure .chip-row { margin-top: 8px; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
   display: inline-flex; align-items: center; gap: 6px;
