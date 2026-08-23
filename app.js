@@ -229,23 +229,40 @@
     return 'https://www.geneanet.org/fonds/individus/?' + params;
   }
 
+  // Lien de recherche nominative sur le Portale Antenati (Archives d'État
+  // italiennes, registres d'état civil numérisés — gratuit, pas d'API
+  // publique). Chemin et paramètre « cognome » confirmés via des URLs
+  // indexées réelles (antenati.cultura.gov.it/search-nominative/?cognome=…) ;
+  // « nome » suit la même convention italienne (nome = prénom).
+  function antenatiSearchUrl(prenom, nom) {
+    var params = [];
+    if (nom) params.push('cognome=' + encodeURIComponent(nom));
+    if (prenom) params.push('nome=' + encodeURIComponent(prenom));
+    return 'https://antenati.cultura.gov.it/search-nominative/' + (params.length ? '?' + params.join('&') : '');
+  }
+
   // Android ne permet à aucune app tierce de déclencher l'écran divisé par
   // code (pas d'API publique pour ça sur un téléphone standard, en dehors
   // du geste système « Applications récentes ») : on ne peut donc pas
   // « activer » le multi-fenêtres depuis l'app, seulement l'expliquer, une
-  // seule fois, au moment où ça devient utile.
-  var GENEANET_TIP_KEY = 'genealogie:geneanetTipShown:v1';
-  function showGeneanetTipOnce() {
+  // seule fois, au moment où ça devient utile. Message générique (pas de nom
+  // de site) car partagé par tous les liens externes (Geneanet, Antenati…).
+  var SPLIT_SCREEN_TIP_KEY = 'genealogie:geneanetTipShown:v1';
+  function showSplitScreenTipOnce() {
     try {
-      if (localStorage.getItem(GENEANET_TIP_KEY)) return;
-      localStorage.setItem(GENEANET_TIP_KEY, '1');
-      toast('💡 Astuce : pour comparer côte à côte, ouvre les Applications récentes, maintiens l’icône de Geneanet, puis choisis « Écran divisé » et sélectionne Arbre généalogique.');
+      if (localStorage.getItem(SPLIT_SCREEN_TIP_KEY)) return;
+      localStorage.setItem(SPLIT_SCREEN_TIP_KEY, '1');
+      toast('💡 Astuce : pour comparer côte à côte, ouvre les Applications récentes, maintiens l’icône du site tout juste ouvert, puis choisis « Écran divisé » et sélectionne Arbre généalogique.');
     } catch (e) {}
   }
   function openGeneanetForPerson(p) {
     var year = (p.naissance && p.naissance.date) ? p.naissance.date.slice(0, 4) : '';
     openExternal(geneanetSearchUrl(p.prenom, p.nom, year));
-    showGeneanetTipOnce();
+    showSplitScreenTipOnce();
+  }
+  function openAntenatiForPerson(p) {
+    openExternal(antenatiSearchUrl(p.prenom, p.nom));
+    showSplitScreenTipOnce();
   }
 
   // Dans la WebView Android (app native), un lien <a download> sur une URL
@@ -918,6 +935,7 @@
         '<button class="btn btn-ghost btn-sm" data-act="set-home">🏠 Définir comme racine</button>' +
         '<button class="btn btn-ghost btn-sm" data-act="find-duplicates">🔗 Doublons locaux</button>' +
         '<button class="btn btn-ghost btn-sm" data-act="open-geneanet" title="Ouvre la recherche Geneanet dans le navigateur, préremplie">🌐 Chercher sur Geneanet</button>' +
+        '<button class="btn btn-ghost btn-sm" data-act="open-antenati" title="Ouvre la recherche nominative du Portale Antenati (archives d’état civil italiennes), préremplie">🇮🇹 Chercher sur Antenati</button>' +
       '</div>' +
       '<div class="detail-actions-danger">' +
         '<button class="btn btn-danger btn-sm" data-act="delete">🗑 Supprimer cette personne</button>' +
@@ -1058,6 +1076,8 @@
       proposeMatch(personId, true);
     } else if (act === 'open-geneanet') {
       openGeneanetForPerson(p);
+    } else if (act === 'open-antenati') {
+      openAntenatiForPerson(p);
     }
   }
 
@@ -2018,14 +2038,23 @@
     var target = wtTargetId ? state.persons[wtTargetId] : null;
     var year = (target && target.naissance && target.naissance.date) ? target.naissance.date.slice(0, 4) : '';
     openExternal(geneanetSearchUrl(parsed.fn, parsed.ln, year));
-    showGeneanetTipOnce();
+    showSplitScreenTipOnce();
   });
+  var wtAntenatiBtn = $('#wtAntenatiBtn');
+  if (wtAntenatiBtn) {
+    wtAntenatiBtn.addEventListener('click', function () {
+      var q = ($('#wtQuery').value || '').trim();
+      var parsed = q ? splitNameQuery(q) : { fn: '', ln: '' };
+      openExternal(antenatiSearchUrl(parsed.fn, parsed.ln));
+      showSplitScreenTipOnce();
+    });
+  }
   $('#wtClose').addEventListener('click', function () { onlineDlg.close(); });
   $('#wtQuery').addEventListener('keydown', function (e) { if (e.key === 'Enter') triggerOnlineSearch(); });
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.41';
+  var APP_VERSION = '1.4.42';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
