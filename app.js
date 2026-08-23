@@ -394,6 +394,38 @@
     updateNav();
   }
 
+  // --- Vue en éventail (ascendants, pensée pour l'impression) ------------
+
+  function openFanChart() {
+    var cr = currentRoot();
+    if (!cr || !state.persons[cr]) { alert('Ajoute au moins une personne avant de générer l’éventail.'); return; }
+    var svgEl = $('#fanChartSvg');
+    var info = FanChart.render(svgEl, state, cr, {});
+    var infoEl = $('#fanChartInfo');
+    if (infoEl) {
+      var txt = ' — ' + info.generations + ' génération(s) d’ascendants';
+      // La profondeur réelle des données peut dépasser ce qui reste lisible
+      // sur le graphique (voir FanChart.pickGenerationCount) : le signaler
+      // plutôt que de laisser croire que tout a été affiché.
+      if (info.realDepth > info.generations) {
+        txt += ' (limité pour rester lisible — ' + info.realDepth + ' connues au total)';
+      }
+      infoEl.textContent = txt;
+    }
+    $('#fanChartOverlay').classList.remove('hidden');
+  }
+  function closeFanChart() { $('#fanChartOverlay').classList.add('hidden'); }
+
+  $('#btnFanChart').addEventListener('click', openFanChart);
+  $('#btnFanClose').addEventListener('click', closeFanChart);
+  $('#btnFanPrint').addEventListener('click', function () { window.print(); });
+  $('#btnFanExportSvg').addEventListener('click', function () {
+    var svgEl = $('#fanChartSvg');
+    var xml = new XMLSerializer().serializeToString(svgEl);
+    if (!/^<\?xml/.test(xml)) xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml;
+    downloadFile('eventail-genealogique.svg', xml, 'image/svg+xml');
+  });
+
   // Fil d'Ariane du chemin parcouru (rootHistory + position courante) :
   // chaque étape est cliquable et ramène directement dessus, plus rapide que
   // de cliquer plusieurs fois sur « Retour ».
@@ -2120,7 +2152,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.44';
+  var APP_VERSION = '1.4.45';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

@@ -26,6 +26,7 @@
         <button id="btnTreeBack" class="btn btn-ghost btn-sm" title="Revenir à la personne précédente" disabled>◀ Retour</button>
         <button id="btnTreeHome" class="btn btn-ghost btn-sm" title="Revenir à la personne racine" disabled>🏠 Racine</button>
         <button id="btnChangeRoot" class="btn btn-ghost btn-sm">Changer</button>
+        <button id="btnFanChart" class="btn btn-ghost btn-sm" title="Vue en éventail, pensée pour l'impression (ascendants uniquement)">🖨 Éventail</button>
       </div>
       <div class="tree-toolbar-row">
         <nav id="treeBreadcrumb" class="tree-breadcrumb" aria-label="Chemin de navigation"></nav>
@@ -250,11 +251,33 @@
   </div>
 </dialog>
 
+<!-- Div plein écran (pas un <dialog>) : l'impression du contenu d'un
+     <dialog> ouvert reste peu fiable selon les navigateurs/WebView — un
+     div classique s'imprime normalement avec les règles @media print
+     ci-dessous. -->
+<div id="fanChartOverlay" class="fan-overlay hidden">
+  <div class="fan-toolbar">
+    <div>
+      <strong>Vue en éventail</strong>
+      <span id="fanChartInfo" class="muted"></span>
+    </div>
+    <div class="btn-row">
+      <button type="button" id="btnFanPrint" class="btn btn-accent btn-sm">🖨 Imprimer</button>
+      <button type="button" id="btnFanExportSvg" class="btn btn-sm">💾 Exporter (.svg)</button>
+      <button type="button" id="btnFanClose" class="btn btn-ghost btn-sm">Fermer</button>
+    </div>
+  </div>
+  <div class="fan-svg-wrap">
+    <svg id="fanChartSvg" class="fan-svg"></svg>
+  </div>
+</div>
+
 <script src="store.js"></script>
 <script src="gedcom.js"></script>
 <script src="wikitree.js"></script>
 <script src="insee.js"></script>
 <script src="tree.js"></script>
+<script src="fanchart.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

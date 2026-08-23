@@ -388,6 +388,56 @@ dialog h2 { margin-top: 0; font-size: 1.05rem; }
 .chip-x:hover { color: #fff; background: var(--danger); }
 .detail-notes { white-space: pre-wrap; font-size: 0.9rem; color: var(--text); background: var(--surface-2); border-radius: 8px; padding: 10px; }
 
+/* --- Vue en éventail (ascendants, pensée pour l'impression) ------------ */
+.fan-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  background: var(--bg); color: var(--text);
+  display: flex; flex-direction: column;
+}
+.fan-overlay.hidden { display: none; }
+.fan-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; border-bottom: 1px solid var(--border); flex: 0 0 auto;
+}
+.fan-toolbar .muted { display: block; font-size: 0.78rem; margin-top: 2px; }
+.fan-svg-wrap { flex: 1 1 auto; overflow: auto; padding: 10px; }
+.fan-svg { width: 100%; height: 100%; min-height: 480px; }
+.fan-wedge { fill: var(--surface-2); stroke: var(--border); stroke-width: 1; }
+.fan-wedge.sexe-H { stroke: var(--male); }
+.fan-wedge.sexe-F { stroke: var(--female); }
+/* Quartier vide = ancêtre pas encore renseigné : pointillés discrets plutôt
+   que masqué, pour que le graphique signale visuellement où chercher. */
+.fan-wedge-empty { fill: transparent; stroke: var(--border); stroke-dasharray: 3 3; opacity: 0.6; }
+.fan-label { fill: var(--text); font-family: inherit; }
+.fan-label.sexe-H { fill: var(--male); }
+.fan-label.sexe-F { fill: var(--female); }
+.fan-root { fill: var(--accent); stroke: var(--accent-strong); stroke-width: 2; }
+.fan-root.sexe-H { stroke: var(--male); }
+.fan-root.sexe-F { stroke: var(--female); }
+.fan-root-label, .fan-root-years { fill: var(--bg); font-weight: 700; }
+.fan-root-label { font-size: 13px; }
+.fan-root-years { font-size: 10px; }
+
+@media print {
+  /* Fond blanc, texte sombre : le thème sombre de l'app gâcherait de
+     l'encre et serait peu lisible une fois imprimé sur papier. */
+  body > *:not(#fanChartOverlay) { display: none !important; }
+  .fan-overlay { position: static !important; background: #fff !important; color: #111 !important; }
+  .fan-toolbar { display: none !important; }
+  .fan-svg-wrap { overflow: visible !important; padding: 0 !important; height: auto !important; }
+  .fan-svg { width: 100% !important; height: auto !important; min-height: 0 !important; }
+  .fan-wedge { fill: #fff; stroke: #333; }
+  .fan-wedge.sexe-H { stroke: #2b5f7d; }
+  .fan-wedge.sexe-F { stroke: #8a3f5c; }
+  .fan-wedge-empty { stroke: #bbb; }
+  .fan-label { fill: #111; }
+  .fan-label.sexe-H { fill: #1d4b63; }
+  .fan-label.sexe-F { fill: #6e2f47; }
+  .fan-root { fill: #f2d9a6; stroke: #7a5322; }
+  .fan-root-label, .fan-root-years { fill: #111; }
+}
+@page { size: landscape; margin: 8mm; }
+
 /* Trois groupes visuellement distincts : action principale, outils/navigation
    secondaires (discrets), suppression nettement à part (irréversible). */
 .detail-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
