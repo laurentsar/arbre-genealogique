@@ -81,10 +81,38 @@
   }
 
   function subLine(p) {
-    if (p.naissance && p.naissance.date) return 'né(e) ' + formatDateFr(p.naissance.date);
-    if (p.naissance && p.naissance.lieu) return p.naissance.lieu;
-    if (p.decede) return 'Décédé(e)';
+    var ageInfo = Store.computeAge(p);
+    var ageTxt = ageInfo ? ' · ' + ageInfo.age + ' ans' : '';
+    if (p.naissance && p.naissance.date) return 'né(e) ' + formatDateFr(p.naissance.date) + ageTxt;
+    if (p.naissance && p.naissance.lieu) return p.naissance.lieu + ageTxt;
+    if (p.decede) return 'Décédé(e)' + ageTxt;
     return '';
+  }
+
+  // Version « puces » de detailMeta, pour l'en-tête de fiche : au lieu d'une
+  // phrase dense tout en gris, chaque fait (naissance, décès, âge) devient
+  // une puce séparée, plus aérée et facile à scanner. L'âge — donnée la plus
+  // regardée d'un coup d'œil — ressort visuellement (puce accentuée) plutôt
+  // que noyé entre parenthèses. Le sexe n'est plus répété en texte : il est
+  // déjà visible sur l'avatar (pastille + pictogramme ♂/♀).
+  function detailHeaderChips(p) {
+    var ageInfo = Store.computeAge(p);
+    var chips = [];
+    if (p.naissance && (p.naissance.date || p.naissance.lieu)) {
+      var birthTxt = [p.naissance.date ? formatDateFr(p.naissance.date) : '', p.naissance.lieu ? 'à ' + p.naissance.lieu : ''].filter(Boolean).join(' ');
+      chips.push('<span class="chip chip-fact">🎂 Né(e) ' + escapeHtml(birthTxt) + '</span>');
+    }
+    if (p.decede || (p.deces && (p.deces.date || p.deces.lieu))) {
+      var deathTxt = [p.deces.date ? formatDateFr(p.deces.date) : '', p.deces.lieu ? 'à ' + p.deces.lieu : ''].filter(Boolean).join(' ');
+      chips.push('<span class="chip chip-fact">✝ Décédé(e) ' + escapeHtml(deathTxt) + '</span>');
+      if (ageInfo && ageInfo.atDeath) chips.push('<span class="chip chip-age">' + ageInfo.age + ' ans</span>');
+    } else if (ageInfo) {
+      chips.push('<span class="chip chip-age">' + ageInfo.age + ' ans</span>');
+    }
+    if (!chips.length) {
+      chips.push('<span class="chip chip-fact chip-empty">' + (p.sexe === 'H' ? 'Homme' : p.sexe === 'F' ? 'Femme' : 'Sexe non précisé') + '</span>');
+    }
+    return chips.join('');
   }
 
   function detailMeta(p) {
@@ -856,10 +884,9 @@
     var siblings = Store.getSiblings(state, personId);
 
     var html = '<div class="detail-header">' + avatarHTML(p) +
-      '<div><p class="detail-name">' + escapeHtml(Store.fullName(p)) + '</p>' +
-      '<p class="detail-meta">' + escapeHtml(detailMeta(p)) +
+      '<div class="detail-header-info"><p class="detail-name">' + escapeHtml(Store.fullName(p)) +
       (p.wikitree ? ' <span class="detail-badge" title="Liée à un profil WikiTree">🔗 WikiTree</span>' : '') +
-      '</p></div></div>';
+      '</p><div class="chip-row detail-chips">' + detailHeaderChips(p) + '</div></div></div>';
 
     // Les liens de famille directs sont l'info la plus indispensable d'une
     // fiche : regroupés dans un bloc distinct, juste sous l'en-tête, avant
@@ -1998,7 +2025,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.40';
+  var APP_VERSION = '1.4.41';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

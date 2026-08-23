@@ -295,15 +295,30 @@ dialog h2 { margin-top: 0; font-size: 1.05rem; }
 .picker-list { max-height: 40vh; border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
 
 /* --- Fiche détail --- */
-.detail-header { display: flex; gap: 14px; align-items: center; margin-bottom: 4px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
-.detail-header .avatar { width: 60px; height: 60px; font-size: 1.4rem; }
-.detail-name { font-size: 1.2rem; font-weight: 700; margin: 0; }
-.detail-meta { color: var(--muted); font-size: 0.85rem; }
+/* En-tête de fiche : plus aéré (avatar agrandi, respiration verticale) et
+   faits présentés en puces plutôt qu'en phrase dense, pour que l'œil
+   accroche l'essentiel (âge notamment, voir .chip-age) sans avoir à lire
+   une ligne entière. */
+.detail-header { display: flex; gap: 18px; align-items: center; margin-bottom: 6px; padding: 4px 0 20px; border-bottom: 1px solid var(--border); }
+.detail-header .avatar { width: 72px; height: 72px; font-size: 1.6rem; }
+.detail-header-info { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.detail-name { font-size: 1.35rem; font-weight: 700; margin: 0; line-height: 1.25; }
+.detail-chips { margin: 0; }
 .detail-badge {
   display: inline-flex; align-items: center; gap: 3px;
   background: var(--surface-2); border: 1px solid var(--line-union);
   color: var(--line-union); border-radius: 999px; padding: 1px 8px;
-  font-size: 0.72rem; font-weight: 600; margin-left: 4px; vertical-align: middle;
+  font-size: 0.72rem; font-weight: 600; margin-left: 6px; vertical-align: middle;
+}
+/* Puce neutre pour un fait (naissance, décès). */
+.chip-fact { cursor: default; font-size: 0.8rem; padding: 5px 11px; }
+.chip-fact.chip-empty { color: var(--muted); font-style: italic; }
+/* Puce accentuée pour l'âge : c'est la donnée la plus regardée d'un coup
+   d'œil sur une fiche, elle doit ressortir plutôt que se fondre dans le
+   texte gris environnant. */
+.chip-age {
+  cursor: default; font-size: 0.8rem; padding: 5px 12px; font-weight: 700;
+  background: var(--accent); border-color: var(--accent); color: var(--bg);
 }
 .detail-section { margin-top: 14px; }
 .detail-section h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 8px; }
