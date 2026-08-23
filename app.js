@@ -591,6 +591,45 @@
     statPersons.textContent = Object.keys(state.persons).length;
     statUnions.textContent = Object.keys(state.unions).length;
     renderSuggestions();
+    renderBackups();
+  }
+
+  // --- Sauvegardes automatiques (avant chaque écriture, rotation à 10) ---
+
+  function renderBackups() {
+    var listEl = $('#backupsList');
+    if (!listEl) return;
+    var backups = Store.listBackups();
+    listEl.innerHTML = '';
+    if (!backups.length) {
+      var empty = document.createElement('li');
+      empty.className = 'empty-hint';
+      empty.style.cursor = 'default';
+      empty.textContent = 'Aucune sauvegarde automatique pour l’instant.';
+      listEl.appendChild(empty);
+      return;
+    }
+    backups.forEach(function (b, i) {
+      var count = 0;
+      try { count = Object.keys(JSON.parse(b.data).persons || {}).length; } catch (e) {}
+      var li = document.createElement('li');
+      li.innerHTML = '<div style="flex:1 1 auto;min-width:0"><div class="person-line-name">' + escapeHtml(timeAgo(b.at)) + '</div>' +
+        '<div class="person-line-sub">' + count + ' personne(s) · ' + escapeHtml(new Date(b.at).toLocaleString('fr-FR')) + '</div></div>' +
+        '<button class="btn btn-sm btn-ghost" type="button" data-restore="' + i + '">↺ Restaurer</button>';
+      listEl.appendChild(li);
+    });
+    $all('#backupsList [data-restore]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var i = Number(btn.dataset.restore);
+        if (!confirm('Restaurer cette version ? Les données actuelles seront remplacées (elles sont elles-mêmes sauvegardées automatiquement avant).')) return;
+        var restored = Store.restoreBackup(i);
+        if (!restored) { alert('Sauvegarde illisible.'); return; }
+        state = restored;
+        Store.save(state);
+        refreshAll();
+        toast('✓ Version restaurée.');
+      });
+    });
   }
 
   // --- Suggestions : scan de l'arbre (doublons, fiches incomplètes, dates) ---
@@ -2081,7 +2120,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.43';
+  var APP_VERSION = '1.4.44';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

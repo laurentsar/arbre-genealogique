@@ -29,11 +29,49 @@
     }
   }
 
+  // Sauvegarde automatique : avant chaque écriture qui remplace les données
+  // déjà persistées, l'ancien contenu (celui qu'on est sur le point
+  // d'écraser) est conservé dans une file à part — protection contre une
+  // fausse manip (suppression, fusion, import qui tourne mal) sans action
+  // de l'utilisateur. Rotation : seules les 10 dernières sont gardées, les
+  // plus anciennes sont retirées au fur et à mesure (pas de croissance
+  // indéfinie de localStorage).
+  var BACKUP_KEY = 'genealogie:backups:v1';
+  var BACKUP_MAX = 10;
+  function pushBackup(oldRaw) {
+    try {
+      if (!oldRaw) return;
+      var oldData = JSON.parse(oldRaw);
+      if (!oldData || !oldData.persons || !Object.keys(oldData.persons).length) return;
+      var list;
+      try { list = JSON.parse(localStorage.getItem(BACKUP_KEY)) || []; } catch (e) { list = []; }
+      list.unshift({ at: new Date().toISOString(), data: oldRaw });
+      if (list.length > BACKUP_MAX) list = list.slice(0, BACKUP_MAX);
+      localStorage.setItem(BACKUP_KEY, JSON.stringify(list));
+    } catch (e) {
+      console.error('Sauvegarde automatique impossible', e);
+    }
+  }
+  function listBackups() {
+    try { return JSON.parse(localStorage.getItem(BACKUP_KEY)) || []; } catch (e) { return []; }
+  }
+  // Renvoie l'état restauré (à assigner soi-même, puis Store.save) plutôt que
+  // de l'appliquer directement : la fonction reste pure, l'appelant décide
+  // du re-rendu et gère la confirmation utilisateur.
+  function restoreBackup(index) {
+    var entry = listBackups()[index];
+    if (!entry) return null;
+    try { return JSON.parse(entry.data); } catch (e) { return null; }
+  }
+
   var saveTimer = null;
   var pendingState = null;
   function writeNow(state) {
     try {
-      localStorage.setItem(KEY, JSON.stringify(state));
+      var oldRaw = localStorage.getItem(KEY);
+      var newRaw = JSON.stringify(state);
+      if (oldRaw && oldRaw !== newRaw) pushBackup(oldRaw);
+      localStorage.setItem(KEY, newRaw);
     } catch (e) {
       console.error('Sauvegarde impossible', e);
     }
@@ -781,6 +819,8 @@
     load: load,
     save: save,
     flush: flush,
+    listBackups: listBackups,
+    restoreBackup: restoreBackup,
     addPerson: addPerson,
     updatePerson: updatePerson,
     deletePerson: deletePerson,
