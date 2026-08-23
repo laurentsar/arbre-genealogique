@@ -734,7 +734,7 @@
       $('#personFormTitle').textContent = existing ? 'Modifier la personne' : 'Nouvelle personne';
       $('#fPrenom').value = existing ? existing.prenom : ((prefill && prefill.prenom) || '');
       $('#fNom').value = existing ? existing.nom : ((prefill && prefill.nom) || '');
-      $('#fSexe').value = existing ? existing.sexe : '?';
+      $('#fSexe').value = existing ? existing.sexe : ((prefill && prefill.sexe) || '?');
       $('#fDecede').checked = existing ? !!existing.decede : false;
       $('#fNaissanceDate').value = existing && existing.naissance ? formatDateFr(existing.naissance.date) : '';
       $('#fNaissanceLieu').value = existing && existing.naissance ? existing.naissance.lieu : '';
@@ -854,9 +854,12 @@
       function onNew() {
         handled = true;
         var q = (search.value || '').trim();
-        var prefill = q ? splitNameQuery(q) : null;
+        var parsed = q ? splitNameQuery(q) : null;
+        var prefill = {};
+        if (parsed) { prefill.prenom = parsed.fn; prefill.nom = parsed.ln; }
+        if (opts.newSexe) prefill.sexe = opts.newSexe;
         dlg.close();
-        openPersonForm(null, prefill ? { prenom: prefill.fn, nom: prefill.ln } : null).then(function (person) {
+        openPersonForm(null, Object.keys(prefill).length ? prefill : null).then(function (person) {
           finish(person ? { id: person.id } : null);
         });
       }
@@ -881,15 +884,21 @@
 
   // --- Fiche détail (navigation + actions de parenté) --------------------
 
-  function relSection(title, list, addLabel, addAction, unlinkKind) {
+  // addSpecs : liste de { label, action, sexe } — plusieurs boutons d'ajout
+  // possibles (ex. « Père » / « Mère » séparés plutôt qu'un « Parent »
+  // générique) ; sexe (optionnel) préremplit le sexe sur la fiche de la
+  // nouvelle personne créée depuis ce bouton précis.
+  function relSection(title, list, addSpecs, unlinkKind) {
     var chips = list.map(function (p) {
       var name = '<span class="chip-name" data-open="' + p.id + '">' + escapeHtml(Store.fullName(p)) + '</span>';
       var rm = unlinkKind ? '<button class="chip-x" type="button" title="Détacher" data-unlink="' + unlinkKind + '" data-id="' + p.id + '">×</button>' : '';
       return '<span class="chip">' + name + rm + '</span>';
     }).join('');
-    var addChip = addAction ? '<span class="chip chip-add" data-act="' + addAction + '">+ ' + escapeHtml(addLabel) + '</span>' : '';
-    var emptyHint = (!list.length && !addAction) ? '<span class="muted">—</span>' : '';
-    return '<div class="detail-section"><h3>' + title + '</h3><div class="chip-row">' + chips + addChip + emptyHint + '</div></div>';
+    var addChips = (addSpecs || []).map(function (spec) {
+      return '<span class="chip chip-add" data-act="' + spec.action + '"' + (spec.sexe ? ' data-sexe="' + spec.sexe + '"' : '') + '>+ ' + escapeHtml(spec.label) + '</span>';
+    }).join('');
+    var emptyHint = (!list.length && !(addSpecs && addSpecs.length)) ? '<span class="muted">—</span>' : '';
+    return '<div class="detail-section"><h3>' + title + '</h3><div class="chip-row">' + chips + addChips + emptyHint + '</div></div>';
   }
 
   function renderDetail(personId) {
@@ -909,10 +918,26 @@
     // fiche : regroupés dans un bloc distinct, juste sous l'en-tête, avant
     // tout le reste (notes, frères/sœurs en retrait plus bas — voir CSS
     // .detail-core / .detail-section-muted).
+    // Père / mère proposés séparément (plutôt qu'un « parent » générique) :
+    // évite d'avoir à ouvrir la fiche ensuite juste pour préciser le sexe.
+    // Seul le rôle manquant est proposé si un parent d'un sexe donné existe déjà.
+    var parentSpecs = [];
+    if (parents.length < 2) {
+      var hasFather = parents.some(function (par) { return par.sexe === 'H'; });
+      var hasMother = parents.some(function (par) { return par.sexe === 'F'; });
+      if (!hasFather) parentSpecs.push({ label: 'Ajouter un père', action: 'add-parent', sexe: 'H' });
+      if (!hasMother) parentSpecs.push({ label: 'Ajouter une mère', action: 'add-parent', sexe: 'F' });
+    }
+    // Le libellé (conjoint/conjointe) et le sexe préconisé pour la nouvelle
+    // fiche s'accordent avec le sexe déjà défini de la personne courante.
+    var spouseSpec = { label: 'Ajouter un conjoint', action: 'add-spouse', sexe: null };
+    if (p.sexe === 'H') spouseSpec = { label: 'Ajouter une conjointe', action: 'add-spouse', sexe: 'F' };
+    else if (p.sexe === 'F') spouseSpec = { label: 'Ajouter un conjoint', action: 'add-spouse', sexe: 'H' };
+
     html += '<div class="detail-core">' +
-      relSection('Parents', parents, 'Ajouter un parent', 'add-parent', 'parent') +
-      relSection('Conjoint(s)', spouses, 'Ajouter un conjoint', 'add-spouse', 'spouse') +
-      relSection('Enfants', children, 'Ajouter un enfant', 'add-child', 'child') +
+      relSection('Parents', parents, parentSpecs, 'parent') +
+      relSection('Conjoint(s)', spouses, [spouseSpec], 'spouse') +
+      relSection('Enfants', children, [{ label: 'Ajouter un enfant', action: 'add-child', sexe: null }], 'child') +
       '</div>';
 
     if (siblings.length) {
@@ -964,11 +989,12 @@
     return Object.keys(seen);
   }
 
-  function addParentFlow(personId) {
+  function addParentFlow(personId, sexe) {
     var p = state.persons[personId];
     if ((p.parentIds || []).length >= 2) { alert('Cette personne a déjà deux parents enregistrés.'); return; }
     var exclude = [personId].concat(descendantIds(personId));
-    pickPerson({ title: 'Choisir le parent', excludeIds: exclude }).then(function (res) {
+    var title = sexe === 'H' ? 'Choisir le père' : sexe === 'F' ? 'Choisir la mère' : 'Choisir le parent';
+    pickPerson({ title: title, excludeIds: exclude, newSexe: sexe }).then(function (res) {
       if (!res) return;
       var slot = (p.parentIds || []).length;
       Store.setParent(state, personId, res.id, slot);
@@ -977,8 +1003,9 @@
     });
   }
 
-  function addSpouseFlow(personId) {
-    pickPerson({ title: 'Choisir le conjoint', excludeIds: [personId] }).then(function (res) {
+  function addSpouseFlow(personId, sexe) {
+    var title = sexe === 'H' ? 'Choisir le conjoint' : sexe === 'F' ? 'Choisir la conjointe' : 'Choisir le conjoint';
+    pickPerson({ title: title, excludeIds: [personId], newSexe: sexe }).then(function (res) {
       if (!res) return;
       Store.findOrCreateUnion(state, [personId, res.id]);
       renderDetail(personId);
@@ -1049,7 +1076,7 @@
   }
   $('#matchKeep').addEventListener('click', function () { $('#matchDialog').close(); });
 
-  function handleDetailAction(act, personId) {
+  function handleDetailAction(act, personId, sexe) {
     var p = state.persons[personId];
     if (!p) return;
     if (act === 'edit') {
@@ -1065,9 +1092,9 @@
         refreshAll();
       }
     } else if (act === 'add-parent') {
-      addParentFlow(personId);
+      addParentFlow(personId, sexe);
     } else if (act === 'add-spouse') {
-      addSpouseFlow(personId);
+      addSpouseFlow(personId, sexe);
     } else if (act === 'add-child') {
       addChildFlow(personId);
     } else if (act === 'complete-online') {
@@ -1095,7 +1122,7 @@
     var openBtn = e.target.closest('[data-open]');
     if (openBtn) { renderDetail(openBtn.dataset.open); return; }
     var actBtn = e.target.closest('[data-act]');
-    if (actBtn) handleDetailAction(actBtn.dataset.act, detailContent.dataset.personId);
+    if (actBtn) handleDetailAction(actBtn.dataset.act, detailContent.dataset.personId, actBtn.dataset.sexe || null);
   });
   $('#btnDetailClose').addEventListener('click', closeDetail);
 
@@ -2054,7 +2081,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.42';
+  var APP_VERSION = '1.4.43';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
