@@ -140,6 +140,18 @@ button, input, select, textarea { font-family: inherit; }
 .tree-name { fill: var(--text); font-size: 18px; text-anchor: middle; font-weight: 800; }
 .tree-years { fill: #e0d2bf; font-size: 13px; text-anchor: middle; font-weight: 600; }
 
+/* Légère profondeur : rend les pastilles moins plates sans coût de perf
+   notable (vue limitée à quelques générations à la fois). */
+.tree-avatar { filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.4)); transition: stroke 0.15s ease, stroke-width 0.15s ease; }
+.tree-name-bg { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3)); }
+
+/* Pictogramme ♂/♀ sur la pastille (même principe que .avatar-gender côté
+   HTML) : lisible même sans distinguer les couleurs. */
+.tree-gender-badge circle { stroke: var(--bg); stroke-width: 1.5; }
+.tree-gender-badge.sexe-H circle { fill: var(--male); }
+.tree-gender-badge.sexe-F circle { fill: var(--female); }
+.tree-gender-glyph { fill: #fff; font-size: 10px; font-weight: 800; }
+
 /* Bouton « i » (ouvrir la fiche) */
 .tree-info-btn { cursor: pointer; }
 .tree-info-btn circle { fill: var(--surface); stroke: var(--accent); stroke-width: 1.5; }
@@ -202,12 +214,28 @@ input[type="search"], input[type="text"], select, textarea {
 }
 .person-list li:hover { background: var(--surface); border-color: var(--border); }
 .avatar {
+  position: relative;
   width: 38px; height: 38px; border-radius: 50%;
   background: var(--surface-2); border: 1.5px solid var(--border);
   display: flex; align-items: center; justify-content: center;
   font-size: 0.95rem; flex: 0 0 auto; overflow: hidden;
 }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar.sexe-H { border-color: var(--male); }
+.avatar.sexe-F { border-color: var(--female); }
+/* Pictogramme ♂/♀ en médaillon, plutôt que la seule couleur de bordure
+   (peu lisible, notamment daltonisme) : identifie le sexe d'un coup d'œil
+   partout où un avatar apparaît (liste, fiche détail, résultats de
+   correspondance/doublons). */
+.avatar-gender {
+  position: absolute; right: -2px; bottom: -2px; width: 15px; height: 15px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; line-height: 1; font-weight: 800; color: #fff;
+  border: 1.5px solid var(--bg);
+}
+.avatar-gender.sexe-H { background: var(--male); }
+.avatar-gender.sexe-F { background: var(--female); }
+.detail-header .avatar-gender { width: 22px; height: 22px; font-size: 13px; border-width: 2px; }
 .person-line-name { font-weight: 600; }
 .person-line-sub { color: var(--muted); font-size: 0.82rem; }
 .gains-line { color: var(--line-union); font-size: 0.78rem; font-weight: 600; margin-top: 2px; }
@@ -279,6 +307,18 @@ dialog h2 { margin-top: 0; font-size: 1.05rem; }
 }
 .detail-section { margin-top: 14px; }
 .detail-section h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 8px; }
+/* Regroupe les liens de famille directs (parents/conjoint·s/enfants) — les
+   plus indispensables d'une fiche — dans un bloc visuellement distinct,
+   plutôt que noyés au même niveau que les infos secondaires. */
+.detail-core {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 14px 4px; margin-top: 14px;
+}
+.detail-core .detail-section:first-child { margin-top: 0; }
+/* Infos secondaires (frères/sœurs, notes) : présentes mais visuellement en
+   retrait, pour que l'essentiel (ci-dessus) reste ce qui accroche l'œil. */
+.detail-section-muted { opacity: 0.82; }
+.detail-section-muted h3 { font-size: 0.78rem; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
   display: inline-flex; align-items: center; gap: 6px;

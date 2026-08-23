@@ -80,6 +80,17 @@
     ib.addEventListener('click', function (e) { e.stopPropagation(); if (opts.onOpen) opts.onOpen(id); });
     g.appendChild(ib);
 
+    // Pictogramme ♂/♀ : identifie le sexe même sans distinguer la couleur
+    // de la pastille (contraste faible entre sexe-H/sexe-F sur petit écran).
+    if (p.sexe === 'H' || p.sexe === 'F') {
+      var gb = svgEl('g', { class: 'tree-gender-badge sexe-' + p.sexe, transform: 'translate(' + (-R * 0.72) + ',' + (R * 0.72) + ')' });
+      gb.appendChild(svgEl('circle', { r: 9 }));
+      var gg = svgEl('text', { class: 'tree-gender-glyph', 'text-anchor': 'middle', dy: '0.35em' });
+      gg.textContent = p.sexe === 'H' ? '♂' : '♀';
+      gb.appendChild(gg);
+      g.appendChild(gb);
+    }
+
     // Badge « + » quand des parents/enfants existent mais ne sont pas affichés
     if (hasHidden) {
       var bp = opts.mode === 'descendants' ? { x: 0, y: R } : { x: R, y: 0 };

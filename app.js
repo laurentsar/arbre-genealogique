@@ -72,8 +72,12 @@
     return (a + b).toUpperCase() || '?';
   }
 
+  // Pictogramme ♂/♀ en médaillon sur l'avatar : identifie le sexe d'un
+  // coup d'œil (couleur seule peu fiable — daltonisme, contraste faible).
   function avatarHTML(p) {
-    return '<span class="avatar">' + escapeHtml(initials(p)) + '</span>';
+    var sexe = (p.sexe === 'H' || p.sexe === 'F') ? p.sexe : null;
+    var badge = sexe ? '<span class="avatar-gender sexe-' + sexe + '">' + (sexe === 'H' ? '♂' : '♀') + '</span>' : '';
+    return '<span class="avatar' + (sexe ? ' sexe-' + sexe : '') + '">' + escapeHtml(initials(p)) + badge + '</span>';
   }
 
   function subLine(p) {
@@ -631,14 +635,18 @@
 
   // --- Formulaire personne (créer / modifier) --------------------------
 
-  function openPersonForm(existing) {
+  // `prefill` (utilisé seulement pour une NOUVELLE personne, ignoré en
+  // modification) : reprend la recherche qui a mené ici — évite de retaper
+  // un nom qu'on vient déjà de chercher sans le trouver (ex. « + Nouvelle
+  // personne » depuis le sélecteur parent/conjoint/enfant).
+  function openPersonForm(existing, prefill) {
     return new Promise(function (resolve) {
       var dlg = $('#personDialog');
       var form = $('#personForm');
       var btnCancel = $('#btnPersonCancel');
       $('#personFormTitle').textContent = existing ? 'Modifier la personne' : 'Nouvelle personne';
-      $('#fPrenom').value = existing ? existing.prenom : '';
-      $('#fNom').value = existing ? existing.nom : '';
+      $('#fPrenom').value = existing ? existing.prenom : ((prefill && prefill.prenom) || '');
+      $('#fNom').value = existing ? existing.nom : ((prefill && prefill.nom) || '');
       $('#fSexe').value = existing ? existing.sexe : '?';
       $('#fDecede').checked = existing ? !!existing.decede : false;
       $('#fNaissanceDate').value = existing && existing.naissance ? formatDateFr(existing.naissance.date) : '';
@@ -758,8 +766,10 @@
       function onSearch() { renderOptions(); }
       function onNew() {
         handled = true;
+        var q = (search.value || '').trim();
+        var prefill = q ? splitNameQuery(q) : null;
         dlg.close();
-        openPersonForm(null).then(function (person) {
+        openPersonForm(null, prefill ? { prenom: prefill.fn, nom: prefill.ln } : null).then(function (person) {
           finish(person ? { id: person.id } : null);
         });
       }
@@ -809,12 +819,22 @@
       (p.wikitree ? ' <span class="detail-badge" title="Liée à un profil WikiTree">🔗 WikiTree</span>' : '') +
       '</p></div></div>';
 
-    if (p.notes) html += '<div class="detail-section"><h3>Notes</h3><div class="detail-notes">' + escapeHtml(p.notes) + '</div></div>';
+    // Les liens de famille directs sont l'info la plus indispensable d'une
+    // fiche : regroupés dans un bloc distinct, juste sous l'en-tête, avant
+    // tout le reste (notes, frères/sœurs en retrait plus bas — voir CSS
+    // .detail-core / .detail-section-muted).
+    html += '<div class="detail-core">' +
+      relSection('Parents', parents, 'Ajouter un parent', 'add-parent', 'parent') +
+      relSection('Conjoint(s)', spouses, 'Ajouter un conjoint', 'add-spouse', 'spouse') +
+      relSection('Enfants', children, 'Ajouter un enfant', 'add-child', 'child') +
+      '</div>';
 
-    html += relSection('Parents', parents, 'Ajouter un parent', 'add-parent', 'parent');
-    html += relSection('Conjoint(s)', spouses, 'Ajouter un conjoint', 'add-spouse', 'spouse');
-    html += relSection('Enfants', children, 'Ajouter un enfant', 'add-child', 'child');
-    if (siblings.length) html += relSection('Frères et sœurs', siblings, null, null);
+    if (siblings.length) {
+      html += '<div class="detail-section-muted">' + relSection('Frères et sœurs', siblings, null, null) + '</div>';
+    }
+    if (p.notes) {
+      html += '<div class="detail-section-muted"><div class="detail-section"><h3>Notes</h3><div class="detail-notes">' + escapeHtml(p.notes) + '</div></div></div>';
+    }
 
     // Trois groupes distincts plutôt qu'un tas de boutons indifférenciés :
     // action principale, outils/navigation secondaires, puis suppression
@@ -1934,7 +1954,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.38';
+  var APP_VERSION = '1.4.39';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
