@@ -77,7 +77,12 @@
       lines.push('0 ' + ref + ' FAM');
       u.partnerIds.forEach(function (pid, idx) {
         var p = state.persons[pid];
-        var tag = (p && p.sexe === 'F') ? 'WIFE' : (idx === 1 ? 'WIFE' : 'HUSB');
+        // Le sexe connu prime TOUJOURS sur la position : sinon un couple
+        // stocké [femme, homme] (l'homme en position 1) faisait retomber sur
+        // le repli positionnel et étiquetait l'homme WIFE à tort — l'import
+        // (voir plus haut) ne gardant qu'un HUSB et une WIFE, ce second
+        // partenaire mal étiqueté finissait par disparaître au ré-import.
+        var tag = (p && p.sexe === 'F') ? 'WIFE' : (p && p.sexe === 'H') ? 'HUSB' : (idx === 1 ? 'WIFE' : 'HUSB');
         if (personIndex[pid]) lines.push('1 ' + tag + ' ' + personIndex[pid]);
       });
       u.childIds.forEach(function (cid) {
@@ -195,11 +200,15 @@
 
     records.filter(function (r) { return r.tag === 'FAM'; }).forEach(function (r) {
       var uidKey = Store.uid();
-      var husb = getChild(r, 'HUSB');
-      var wife = getChild(r, 'WIFE');
-      var partnerIds = [];
-      if (husb && idMap[husb.value]) partnerIds.push(idMap[husb.value]);
-      if (wife && idMap[wife.value]) partnerIds.push(idMap[wife.value]);
+      // TOUS les HUSB/WIFE, pas juste le premier de chaque : certains exports
+      // (Heredis notamment) taguent parfois deux WIFE au lieu d'un HUSB+WIFE
+      // sur une même famille — avec un seul de chaque, le second parent
+      // (homme, mal étiqueté WIFE) disparaissait silencieusement à l'import,
+      // coupant la branche du reste de l'arbre sans qu'aucune erreur
+      // n'apparaisse. getChildren (pluriel) récupère tous les tags présents,
+      // quel que soit leur nombre ou leur étiquette exacte.
+      var partnerIds = getChildren(r, 'HUSB').concat(getChildren(r, 'WIFE'))
+        .map(function (c) { return idMap[c.value]; }).filter(Boolean);
       var childIds = getChildren(r, 'CHIL').map(function (c) { return idMap[c.value]; }).filter(Boolean);
       var marr = getChild(r, 'MARR');
       var md = marr ? dateFromNode(marr) : { date: '', lieu: '' };
