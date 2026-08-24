@@ -43,6 +43,21 @@
 
   function approxTextWidth(str, fs) { return (str || '').length * fs * 0.58; }
 
+  var NAME_FS = 18;
+  var YEARS_FS = 13;
+
+  // Largeur du bandeau nom+années — partagée entre le dessin (drawPerson) et
+  // le calcul d'espacement conjoint (renderDescendants), pour que l'un ne
+  // puisse jamais empiéter sur l'autre : voir dispName/nameW ci-dessous.
+  // Tient compte des DEUX lignes (nom ET années, ex. avec l'âge ajouté :
+  // « 1879 – 1965 (85 ans) » peut être plus large que le nom lui-même).
+  function boxWidth(p) {
+    var info = label(p);
+    var dispName = info.name.length > 26 ? info.name.slice(0, 25) + '…' : info.name;
+    var w = Math.max(approxTextWidth(dispName, NAME_FS), info.years ? approxTextWidth(info.years, YEARS_FS) : 0);
+    return Math.max(w + 20, R * 1.8);
+  }
+
   function drawPerson(group, id, p, cx, cy, opts, isRoot, isSpouse, hasHidden) {
     var cls = 'tree-node sexe-' + (p.sexe || '?');
     if (isRoot) cls += ' is-root';
@@ -59,8 +74,7 @@
     // Nom (agrandi) sur un bandeau pour rester lisible sur le fond sombre
     var info = label(p);
     var dispName = info.name.length > 26 ? info.name.slice(0, 25) + '…' : info.name;
-    var nameFs = 18;
-    var nameW = Math.max(approxTextWidth(dispName, nameFs) + 20, R * 1.8);
+    var nameW = boxWidth(p);
     var nameY = R + 10;
     g.appendChild(svgEl('rect', { class: 'tree-name-bg', x: -nameW / 2, y: nameY, width: nameW, height: 26, rx: 12 }));
     var nameEl = svgEl('text', { class: 'tree-name', 'text-anchor': 'middle', y: nameY + 18 });
@@ -247,9 +261,21 @@
       return { id: id, gen: pos.gen, cx: pos.x * UNIT_W, cy: pos.gen * GEN_H + R };
     });
     var maxGenSeen = nodes.reduce(function (m, n) { return Math.max(m, n.gen); }, 0);
+    // Marge droite du cadre : le plus grand écart conjoint réellement utilisé
+    // (voir renderDescendants) peut dépasser SPOUSE_DX pour des noms longs —
+    // sous-estimer ici resserrerait le cadrage automatique au point de
+    // rogner visuellement le dernier conjoint affiché.
+    var rightMargin = SPOUSE_DX;
+    nodes.forEach(function (n) {
+      var p = state.persons[n.id];
+      var spouses = p ? Store.getSpouses(state, n.id) : [];
+      if (spouses.length) {
+        rightMargin = Math.max(rightMargin, boxWidth(p) / 2 + boxWidth(spouses[0]) / 2 + 16);
+      }
+    });
     return {
       nodes: nodes, edges: edges,
-      width: totalUnits * UNIT_W + SPOUSE_DX,
+      width: totalUnits * UNIT_W + rightMargin,
       height: (maxGenSeen + 1) * GEN_H
     };
   }
@@ -258,13 +284,27 @@
     var byId = {};
     data.nodes.forEach(function (n) { byId[n.id] = n; });
 
+    // Écart réellement nécessaire entre une personne et son 1er conjoint pour
+    // que leurs bandeaux nom+années ne se chevauchent jamais, quelle que soit
+    // la longueur des noms (plancher = SPOUSE_DX, l'espacement habituel pour
+    // des noms courts). Calculé une seule fois par personne, réutilisé pour
+    // le point d'union ET pour le positionnement du conjoint plus bas.
+    var spouseDx = {};
+    function spouseGap(id, sp) {
+      if (spouseDx[id] === undefined) {
+        var p = state.persons[id];
+        spouseDx[id] = Math.max(SPOUSE_DX, boxWidth(p) / 2 + boxWidth(sp) / 2 + 16);
+      }
+      return spouseDx[id];
+    }
+
     // Point d'union par personne : soit entre elle et son 1er conjoint,
     // soit juste sous elle si aucun conjoint n'est enregistré.
     var unionPoint = {};
     data.nodes.forEach(function (n) {
       var spouses = Store.getSpouses(state, n.id);
       if (spouses.length) {
-        unionPoint[n.id] = { x: n.cx + SPOUSE_DX / 2, y: n.cy, spouse: spouses[0] };
+        unionPoint[n.id] = { x: n.cx + spouseGap(n.id, spouses[0]) / 2, y: n.cy, spouse: spouses[0] };
       } else {
         unionPoint[n.id] = { x: n.cx, y: n.cy + R + 44 };
       }
@@ -290,8 +330,9 @@
       var spouses = Store.getSpouses(state, n.id);
       if (spouses.length) {
         var prevX = n.cx;
+        var dx = spouseGap(n.id, spouses[0]);
         spouses.forEach(function (sp, i) {
-          var sx = n.cx + SPOUSE_DX + i * (R * 2 + 18);
+          var sx = n.cx + dx + i * (R * 2 + 18);
           edgesGroup.appendChild(svgEl('path', {
             class: 'tree-edge tree-edge-union',
             d: 'M ' + (prevX + R) + ' ' + n.cy + ' H ' + (sx - R)
