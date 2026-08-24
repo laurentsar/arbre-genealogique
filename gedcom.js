@@ -20,6 +20,19 @@
     return (s || '').replace(/\r?\n/g, ' ').trim();
   }
 
+  // Une note multi-lignes exportée avec esc() (qui aplatit les retours à la
+  // ligne en espaces) perdait sa mise en forme dès le premier aller-retour
+  // export/import — GEDCOM prévoit justement CONT pour représenter des
+  // lignes supplémentaires sur un même champ.
+  function noteLines(tag, text) {
+    var t = (text || '').replace(/\r\n/g, '\n').trim();
+    if (!t) return [];
+    var parts = t.split('\n');
+    var out = ['1 ' + tag + ' ' + parts[0].trim()];
+    for (var i = 1; i < parts.length; i++) out.push('2 CONT ' + parts[i].trim());
+    return out;
+  }
+
   function exportGEDCOM(state) {
     var lines = [];
     lines.push('0 HEAD');
@@ -61,7 +74,7 @@
         if (p.deces && p.deces.date) lines.push('2 DATE ' + gedDate(p.deces.date));
         if (p.deces && p.deces.lieu) lines.push('2 PLAC ' + esc(p.deces.lieu));
       }
-      if (p.notes) lines.push('1 NOTE ' + esc(p.notes));
+      lines.push.apply(lines, noteLines('NOTE', p.notes));
       (p.unionIds || []).forEach(function (uidKey) {
         if (unionIndex[uidKey]) lines.push('1 FAMS ' + unionIndex[uidKey]);
       });
@@ -172,6 +185,13 @@
       });
       return t;
     }
+    // Une personne peut avoir PLUSIEURS tags NOTE (pas juste des lignes de
+    // continuation CONC/CONT d'une même note) — toutes concaténées, sinon
+    // seule la première était gardée et les autres disparaissaient sans
+    // avertissement à l'import.
+    function allNotesText(node) {
+      return getChildren(node, 'NOTE').map(noteText).filter(Boolean).join('\n\n');
+    }
 
     records.filter(function (r) { return r.tag === 'INDI'; }).forEach(function (r) {
       var id = Store.uid();
@@ -187,13 +207,12 @@
       var sexe = sexNode ? (sexNode.value === 'M' ? 'H' : sexNode.value === 'F' ? 'F' : '?') : '?';
       var birt = getChild(r, 'BIRT');
       var deat = getChild(r, 'DEAT');
-      var noteNode = getChild(r, 'NOTE');
       state.persons[id] = {
         id: id, prenom: given, nom: surname, sexe: sexe,
         naissance: birt ? dateFromNode(birt) : { date: '', lieu: '' },
         deces: deat ? dateFromNode(deat) : { date: '', lieu: '' },
         decede: !!deat,
-        notes: noteText(noteNode),
+        notes: allNotesText(r),
         parentIds: [], unionIds: []
       };
     });
@@ -220,7 +239,18 @@
         state.persons[pid].unionIds.push(uidKey);
       });
       childIds.forEach(function (cid) {
-        state.persons[cid].parentIds = partnerIds.slice();
+        // Une même personne peut apparaître comme CHIL dans PLUSIEURS FAM
+        // (fusions/imports successifs qui dupliquent la famille — constaté
+        // sur un vrai fichier, 54 personnes concernées) : écraser sans
+        // condition ferait dépendre le résultat final de l'ORDRE des
+        // enregistrements dans le fichier, avec le risque de repasser de
+        // 2 parents connus à 1 seul si la FAM la moins complète est traitée
+        // en dernier. On ne garde donc que l'ensemble de parents le plus
+        // complet rencontré.
+        var existing = state.persons[cid].parentIds || [];
+        if (partnerIds.length >= existing.length) {
+          state.persons[cid].parentIds = partnerIds.slice();
+        }
       });
     });
 
