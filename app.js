@@ -219,13 +219,27 @@
   // Lien de recherche Geneanet pour une personne (pas d'API publique chez
   // Geneanet — contrairement à WikiTree/INSEE, ceci ouvre juste LEUR site
   // dans le navigateur, prérempli, plutôt que d'interroger une donnée dans
-  // l'app). L'année de naissance (quand connue) réduit le nombre de
-  // résultats à filtrer soi-même côté Geneanet.
-  function geneanetSearchUrl(prenom, nom, anneeNaissance) {
+  // l'app). Réduit le nombre de résultats à filtrer soi-même côté Geneanet :
+  // jour/mois de naissance quand connus (pas seulement l'année), et
+  // nom/prénom du conjoint quand il y en a un d'enregistré. Paramètres du
+  // conjoint (nom_conjoint/prenom_conjoint) confirmés via une URL Geneanet
+  // réelle indexée (prenom_conjoint_operateur, sur le même formulaire) —
+  // à noter : Geneanet réserve ce filtre conjoint aux comptes Premium, un
+  // compte gratuit/non connecté verra probablement ce paramètre ignoré.
+  // Jour/mois de naissance non vérifiés de la même façon (aucune URL
+  // indexée trouvée) : ajoutés par convention avec naissance_annee (déjà
+  // en place) — si Geneanet les ignore, la recherche reste fonctionnelle,
+  // juste moins précise.
+  function geneanetSearchUrl(prenom, nom, naissanceDate, conjoint) {
     var params = 'go=1';
     if (nom) params += '&nom=' + encodeURIComponent(nom);
     if (prenom) params += '&prenom=' + encodeURIComponent(prenom);
-    if (anneeNaissance) params += '&naissance_annee=' + encodeURIComponent(anneeNaissance);
+    var d = naissanceDate ? naissanceDate.split('-') : [];
+    if (d[0]) params += '&naissance_annee=' + encodeURIComponent(d[0]);
+    if (d[1]) params += '&naissance_mois=' + encodeURIComponent(parseInt(d[1], 10));
+    if (d[2]) params += '&naissance_jour=' + encodeURIComponent(parseInt(d[2], 10));
+    if (conjoint && conjoint.nom) params += '&nom_conjoint=' + encodeURIComponent(conjoint.nom);
+    if (conjoint && conjoint.prenom) params += '&prenom_conjoint=' + encodeURIComponent(conjoint.prenom);
     return 'https://www.geneanet.org/fonds/individus/?' + params;
   }
 
@@ -256,8 +270,9 @@
     } catch (e) {}
   }
   function openGeneanetForPerson(p) {
-    var year = (p.naissance && p.naissance.date) ? p.naissance.date.slice(0, 4) : '';
-    openExternal(geneanetSearchUrl(p.prenom, p.nom, year));
+    var spouse = Store.getSpouses(state, p.id)[0];
+    var conjoint = spouse ? { prenom: spouse.prenom, nom: spouse.nom } : null;
+    openExternal(geneanetSearchUrl(p.prenom, p.nom, p.naissance && p.naissance.date, conjoint));
     showSplitScreenTipOnce();
   }
   function openAntenatiForPerson(p) {
@@ -2134,8 +2149,10 @@
     var q = ($('#wtQuery').value || '').trim();
     var parsed = q ? splitNameQuery(q) : { fn: '', ln: '' };
     var target = wtTargetId ? state.persons[wtTargetId] : null;
-    var year = (target && target.naissance && target.naissance.date) ? target.naissance.date.slice(0, 4) : '';
-    openExternal(geneanetSearchUrl(parsed.fn, parsed.ln, year));
+    var naissanceDate = target && target.naissance ? target.naissance.date : '';
+    var spouse = target ? Store.getSpouses(state, target.id)[0] : null;
+    var conjoint = spouse ? { prenom: spouse.prenom, nom: spouse.nom } : null;
+    openExternal(geneanetSearchUrl(parsed.fn, parsed.ln, naissanceDate, conjoint));
     showSplitScreenTipOnce();
   });
   var wtAntenatiBtn = $('#wtAntenatiBtn');
@@ -2152,7 +2169,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.48';
+  var APP_VERSION = '1.4.49';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
