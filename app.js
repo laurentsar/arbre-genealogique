@@ -2266,7 +2266,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.5.0';
+  var APP_VERSION = '1.5.1';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
