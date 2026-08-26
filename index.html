@@ -151,6 +151,7 @@
 <dialog id="personDialog" class="app-dialog">
   <form id="personForm">
     <h2 id="personFormTitle">Nouvelle personne</h2>
+    <button type="button" id="btnPasteGeneanet" class="btn btn-ghost btn-sm" style="margin-bottom:10px">📋 Coller depuis Geneanet</button>
     <div class="form-grid">
       <label>Prénom<input id="fPrenom" type="text"></label>
       <label>Nom<input id="fNom" type="text"></label>
@@ -173,6 +174,16 @@
       <button type="submit" class="btn btn-accent">Enregistrer</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="pasteGeneanetDialog" class="app-dialog">
+  <h2>Coller depuis Geneanet</h2>
+  <p class="muted">Sur la fiche individu Geneanet, sélectionne et copie tout le texte (nom, dates, lieux), puis colle-le ci-dessous. Reconnaît prénom/nom/sexe/dates/lieux de naissance et décès.</p>
+  <textarea id="pasteGeneanetArea" rows="10" style="width:100%" placeholder="Colle ici le texte copié depuis la fiche Geneanet…" autofocus></textarea>
+  <div class="dialog-actions">
+    <button type="button" id="btnPasteGeneanetCancel" class="btn btn-ghost">Annuler</button>
+    <button type="button" id="btnPasteGeneanetApply" class="btn btn-accent">Remplir le formulaire</button>
+  </div>
 </dialog>
 
 <dialog id="detailDialog" class="app-dialog detail-dialog">

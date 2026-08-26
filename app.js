@@ -275,6 +275,87 @@
     openExternal(geneanetSearchUrl(p.prenom, p.nom, p.naissance && p.naissance.date, conjoint));
     showSplitScreenTipOnce();
   }
+
+  // Reconnaissance d'une fiche individu Geneanet copiée-collée (texte brut,
+  // pas d'API) — évite de retaper chaque champ à la main. Basé sur un
+  // exemple réel :
+  //   Josèphe VIDAILHET
+  //   Née le 21 mars 1759 - Sarrancolin, 65408, Hautes-Pyrénées, ..., France
+  //   Décédée le 19 janvier 1832 - ..., France, à l'âge de 72 ans
+  // Le sexe se déduit du « e » de « Né(e) »/« Décédé(e) » — signal gratuit,
+  // pas besoin de le deviner autrement. Chaque champ manque sans faire
+  // échouer les autres (ex. lieu absent, date approximative « en 1759 »).
+  var GENEANET_MOIS = {
+    'janvier': 1, 'février': 2, 'fevrier': 2, 'mars': 3, 'avril': 4, 'mai': 5, 'juin': 6,
+    'juillet': 7, 'août': 8, 'aout': 8, 'septembre': 9, 'octobre': 10, 'novembre': 11,
+    'décembre': 12, 'decembre': 12
+  };
+  function geneanetDateToISO(jour, moisNom, annee) {
+    var mois = GENEANET_MOIS[(moisNom || '').toLowerCase()];
+    var y = ('0000' + annee).slice(-4);
+    if (!mois) return y;
+    var m = ('0' + mois).slice(-2);
+    var d = ('0' + jour).slice(-2);
+    return y + '-' + m + '-' + d;
+  }
+  function parseGeneanetEventLine(rest) {
+    var dm = /(\d{1,2})\s+(\w+)\s+(\d{3,4})/.exec(rest);
+    var date = '';
+    if (dm) date = geneanetDateToISO(dm[1], dm[2], dm[3]);
+    else { var ym = /\b(\d{3,4})\b/.exec(rest); if (ym) date = ym[1]; }
+    var afterDash = rest.split(' - ')[1] || '';
+    var lieu = afterDash.replace(/,?\s*à l['’]âge de.*$/i, '').trim();
+    return { date: date, lieu: lieu };
+  }
+  function parseGeneanetProfile(text) {
+    var lines = (text || '').split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+    var result = { prenom: '', nom: '', sexe: null, naissance: null, deces: null };
+    if (!lines.length) return result;
+    // Ligne 1 : « Prénom(s) NOM » — nom de famille en MAJUSCULES (convention
+    // Geneanet, comme le slash du GEDCOM). Recherche lazy du plus petit
+    // préfixe laissant un suffixe entièrement capitalisé.
+    var nameMatch = /^(.+?)\s+([A-ZÀÂÄÇÉÈÊËÏÎÔÖÙÛÜŸÑ][A-ZÀÂÄÇÉÈÊËÏÎÔÖÙÛÜŸÑ'\-\s]*)$/.exec(lines[0]);
+    if (nameMatch) { result.prenom = nameMatch[1].trim(); result.nom = nameMatch[2].trim(); }
+    else { result.prenom = lines[0]; }
+    lines.forEach(function (line) {
+      var mBirth = /^N[ée]e?\s+(?:le|en|vers)\s+(.+)$/i.exec(line);
+      if (mBirth && !result.naissance) {
+        if (result.sexe === null) result.sexe = /^Née\b/i.test(line) ? 'F' : 'H';
+        result.naissance = parseGeneanetEventLine(mBirth[1]);
+      }
+      var mDeath = /^D[ée]c[ée]d[ée]e?\s+(?:le|en|vers)\s+(.+)$/i.exec(line);
+      if (mDeath && !result.deces) {
+        if (result.sexe === null) result.sexe = /^Décédée\b/i.test(line) ? 'F' : 'H';
+        result.deces = parseGeneanetEventLine(mDeath[1]);
+      }
+    });
+    return result;
+  }
+  function applyGeneanetPaste(text) {
+    var parsed = parseGeneanetProfile(text);
+    // `prenom` seul seul ne suffit pas : c'est aussi le repli quand la 1ère
+    // ligne ne matche pas le motif « Prénom NOM » (elle est alors reprise
+    // telle quelle) — un texte quelconque, sans rapport avec Geneanet,
+    // passerait sinon pour « reconnu » du seul fait d'avoir une 1ère ligne.
+    if (!parsed.nom && !parsed.naissance && !parsed.deces) {
+      toast('Texte non reconnu — vérifie que c’est bien collé depuis une fiche Geneanet.', 'error');
+      return false;
+    }
+    if (parsed.prenom) $('#fPrenom').value = parsed.prenom;
+    if (parsed.nom) $('#fNom').value = parsed.nom;
+    if (parsed.sexe) $('#fSexe').value = parsed.sexe;
+    if (parsed.naissance) {
+      if (parsed.naissance.date) $('#fNaissanceDate').value = formatDateFr(parsed.naissance.date);
+      if (parsed.naissance.lieu) $('#fNaissanceLieu').value = parsed.naissance.lieu;
+    }
+    if (parsed.deces) {
+      $('#fDecede').checked = true;
+      if (parsed.deces.date) $('#fDecesDate').value = formatDateFr(parsed.deces.date);
+      if (parsed.deces.lieu) $('#fDecesLieu').value = parsed.deces.lieu;
+    }
+    toast('✓ Champs remplis depuis Geneanet — vérifie avant d’enregistrer.');
+    return true;
+  }
   function openAntenatiForPerson(p) {
     openExternal(antenatiSearchUrl(p.prenom, p.nom));
     showSplitScreenTipOnce();
@@ -1313,6 +1394,22 @@
   });
   $('#btnCopyExportClose').addEventListener('click', function () { $('#copyExportDialog').close(); });
 
+  // Coller depuis Geneanet : une zone de texte à coller manuellement (long
+  // appui → Coller) plutôt que navigator.clipboard.readText() — cette API
+  // demande une permission pas toujours disponible dans la WebView Android,
+  // et l'app n'embarque pas le plugin Capacitor Clipboard. Un appui long
+  // marche partout, sans rien à négocier.
+  $('#btnPasteGeneanet').addEventListener('click', function () {
+    var ta = $('#pasteGeneanetArea');
+    ta.value = '';
+    $('#pasteGeneanetDialog').showModal();
+    ta.focus();
+  });
+  $('#btnPasteGeneanetCancel').addEventListener('click', function () { $('#pasteGeneanetDialog').close(); });
+  $('#btnPasteGeneanetApply').addEventListener('click', function () {
+    if (applyGeneanetPaste($('#pasteGeneanetArea').value)) $('#pasteGeneanetDialog').close();
+  });
+
   $('#importGedcomInput').addEventListener('change', function (e) {
     var file = e.target.files[0];
     if (!file) return;
@@ -2169,7 +2266,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.4.49';
+  var APP_VERSION = '1.4.50';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
