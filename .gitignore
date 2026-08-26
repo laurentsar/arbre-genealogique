@@ -5,6 +5,10 @@ node_modules
 www
 *.log
 
+# Config backend (URL + secret webhook HA) — build privé « famille » uniquement,
+# jamais dans le dépôt public ni dans les Releases CI.
+backend-config.js
+
 # Python
 __pycache__/
 *.pyc

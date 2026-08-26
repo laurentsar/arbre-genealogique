@@ -1,9 +1,9 @@
 /* sw.js — cache le shell de l'application pour un usage hors-ligne complet.
  * Toutes les données (personnes, unions) restent en localStorage sur l'appareil. */
-const CACHE = 'genealogie-1.4.50';
+const CACHE = 'genealogie-1.5.0';
 const SHELL = [
   'index.html', 'styles.css',
-  'store.js', 'gedcom.js', 'wikitree.js', 'tree.js', 'fanchart.js', 'app.js',
+  'store.js', 'gedcom.js', 'wikitree.js', 'tree.js', 'fanchart.js', 'app.js', 'backend.js',
   'manifest.webmanifest', 'img/icon-192.png', 'img/icon-512.png'
 ];
 
