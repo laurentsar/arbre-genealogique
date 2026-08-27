@@ -6,6 +6,17 @@ personnes, unions, ascendants/descendants.
 Tout reste **en local sur l'appareil** (stockage `localStorage` du
 navigateur) : aucune donnée n'est envoyée à un serveur.
 
+## Liens
+
+- 🌐 **Version web** : <https://laurentsar.github.io/arbre-genealogique/>
+- 📱 **APK Android** : [dernière release](https://github.com/laurentsar/arbre-genealogique/releases/latest)
+
+Les deux sont produits automatiquement à chaque `push` sur `main` et portent
+le même numéro de version (`package.json`) : la page web
+([`deploy-pages.yml`](.github/workflows/deploy-pages.yml)) et l'APK signé
+([`build-apk.yml`](.github/workflows/build-apk.yml)) restent donc toujours
+synchronisés sur la même source.
+
 ## Fonctionnalités
 
 - **Personnes** : fiche par personne (nom, sexe, naissance, décès, notes),
