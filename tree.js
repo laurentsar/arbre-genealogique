@@ -385,15 +385,22 @@
       apply();
     }
 
+    // Seuil de déplacement avant de considérer un vrai pan. On ne capture PAS le
+    // pointeur au pointerdown : sinon le `click` est redirigé vers le SVG au lieu
+    // du nœud → à la souris, sélectionner/éditer une personne ne marchait pas.
+    // On ne capture qu'une fois le seuil franchi (= vrai glissement).
+    var DRAG_THRESHOLD = 5;
     svg.addEventListener('pointerdown', function (e) {
       pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
-      svg.setPointerCapture(e.pointerId);
       var pts = pointerList();
       if (pts.length === 1) {
-        state.dragging = true;
+        state.dragging = false;
+        state.pendingPan = true;
+        state.startX = e.clientX; state.startY = e.clientY;
         state.lastX = e.clientX; state.lastY = e.clientY;
       } else if (pts.length === 2) {
-        state.dragging = false;
+        state.dragging = false; state.pendingPan = false;
+        try { svg.setPointerCapture(e.pointerId); } catch (_) {}
         var dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
         pinch = { dist: Math.hypot(dx, dy) || 1 };
       }
@@ -410,11 +417,18 @@
         var my = (pts[0].y + pts[1].y) / 2 - rect.top;
         setScaleAround(state.scale * (dist / pinch.dist), mx, my);
         pinch.dist = dist;
-      } else if (state.dragging && pts.length === 1) {
-        state.tx += e.clientX - state.lastX;
-        state.ty += e.clientY - state.lastY;
-        state.lastX = e.clientX; state.lastY = e.clientY;
-        apply();
+      } else if (pts.length === 1) {
+        if (state.pendingPan && !state.dragging) {
+          if (Math.hypot(e.clientX - state.startX, e.clientY - state.startY) <= DRAG_THRESHOLD) return;
+          state.dragging = true;                       // seuil franchi → vrai pan
+          try { svg.setPointerCapture(e.pointerId); } catch (_) {}
+        }
+        if (state.dragging) {
+          state.tx += e.clientX - state.lastX;
+          state.ty += e.clientY - state.lastY;
+          state.lastX = e.clientX; state.lastY = e.clientY;
+          apply();
+        }
       }
     });
     ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) {
@@ -422,9 +436,9 @@
         delete pointers[e.pointerId];
         var pts = pointerList();
         if (pts.length < 2) pinch = null;
-        if (pts.length === 0) state.dragging = false;
+        if (pts.length === 0) { state.dragging = false; state.pendingPan = false; }
         else if (pts.length === 1) {
-          state.dragging = true;
+          state.dragging = true; state.pendingPan = false;
           state.lastX = pts[0].x; state.lastY = pts[0].y;
         }
       });
