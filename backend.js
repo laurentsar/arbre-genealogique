@@ -250,7 +250,10 @@
     if (!el) return;
     if (hasBaked()) {
       el.innerHTML = '<p class="muted">Synchronisation activée via Home Assistant (cette page). ' +
-        'Les modifications de l\'arbre sont partagées automatiquement entre appareils.</p>';
+        'Les modifications de l\'arbre sont partagées automatiquement entre appareils.</p>' +
+        '<div class="btn-row" style="margin-top:10px"><button id="genSyncNow" class="btn btn-sm" type="button">🔄 Synchroniser maintenant</button></div>' +
+        '<p id="genSyncMsg" class="muted" style="margin-top:8px;min-height:1.2em"></p>';
+      document.getElementById('genSyncNow').onclick = manualSync;
       return;
     }
     var st = loadStored();
@@ -266,6 +269,7 @@
       'style="' + syncInputStyle() + '" placeholder="genealogie_xxxxxxxx"></label>' +
       '<div class="btn-row" style="margin-top:12px">' +
       '<button id="genSyncSave" class="btn btn-sm" type="button">Enregistrer et tester</button>' +
+      (conf ? '<button id="genSyncNow" class="btn btn-sm" type="button">🔄 Synchroniser maintenant</button>' : '') +
       (conf ? '<button id="genSyncForget" class="btn btn-sm btn-ghost" type="button">Oublier</button>' : '') +
       '</div>' +
       '<p id="genSyncMsg" class="muted" style="margin-top:8px;min-height:1.2em">' +
@@ -276,6 +280,8 @@
       saveSyncConfig(document.getElementById('genSyncUrl').value,
                      document.getElementById('genSyncHook').value);
     };
+    var now = document.getElementById('genSyncNow');
+    if (now) now.onclick = manualSync;
     var forget = document.getElementById('genSyncForget');
     if (forget) forget.onclick = function () { localStorage.removeItem(CFG_KEY); renderSyncSettings(); };
   }
@@ -355,26 +361,45 @@
     pushTimer = setTimeout(stampAndPush, 900);
   }
 
-  function stampAndPush() {
-    if (!configured()) return;
-    if (!subtle) { console.warn('genealogie: crypto indisponible (http ?) → pas de sync'); return; }
+  function stampAndPush(opts) {
+    opts = opts || {};
+    if (!configured()) return Promise.resolve('non configuré');
+    if (!subtle) {
+      console.warn('genealogie: crypto indisponible (http ?) → pas de sync');
+      return Promise.reject(new Error('chiffrement indisponible (contexte non sécurisé ?)'));
+    }
     var s = readLocal();
-    if (!s) return;
+    if (!s) return Promise.resolve('rien à envoyer');
     s.meta = s.meta || {};
     s.meta.updatedAt = Date.now();
     s.meta.device = deviceId;
     var plain = JSON.stringify(s);
     writeLocalSilently(plain);
-    if (plain === lastSyncedJSON) return;
+    if (!opts.force && plain === lastSyncedJSON) return Promise.resolve('déjà à jour');
     var webhookUrl = resolved().webhookUrl;
-    encryptState(plain).then(function (enc) {
+    return encryptState(plain).then(function (enc) {
       var envelope = {
         enc: 'v1', salt: currentSaltB64(), iv: enc.iv, ct: enc.ct, zip: enc.zip,
         meta: { updatedAt: s.meta.updatedAt, device: deviceId }
       };
       return netPostJson(webhookUrl, { b64: strToB64(JSON.stringify(envelope)), device: deviceId });
-    }).then(function (r) { if (r && r.ok) lastSyncedJSON = plain; })
-      .catch(function (e) { console.warn('genealogie: push échoué', e); });
+    }).then(function (r) {
+      if (r && r.ok) { lastSyncedJSON = plain; return 'envoyé'; }
+      throw new Error('HTTP ' + (r && r.status));
+    }).catch(function (e) { console.warn('genealogie: push échoué', e); throw e; });
+  }
+
+  // Synchro manuelle (bouton) : tire le distant puis pousse l'état local, avec
+  // retour visible. force:true garantit un envoi même si rien n'a changé.
+  function manualSync() {
+    var msg = document.getElementById('genSyncMsg');
+    if (!configured()) { if (msg) msg.textContent = 'Configure d\'abord la synchronisation.'; return; }
+    if (msg) msg.textContent = 'Synchronisation…';
+    clearTimeout(pushTimer);
+    pull();
+    stampAndPush({ force: true })
+      .then(function () { if (msg) msg.textContent = 'Synchronisé ✓ à ' + new Date().toLocaleTimeString('fr-FR'); })
+      .catch(function (e) { if (msg) msg.textContent = 'Échec : ' + (e && e.message || e); });
   }
 
   function adoptRemote(remoteStr, updatedAt) {
