@@ -352,7 +352,10 @@
   // or un gros arbre (photos base64…) dépasse même gzippé. On découpe le b64 en
   // tranches < limite ; le shell_command HA les réassemble (idx/total/id).
   function postInChunks(url, b64, device) {
-    var CHUNK = 180000;
+    // 100 Ko/chunk : sous la limite Linux MAX_ARG_STRLEN (131072 o par argument
+    // execve — le chunk est passé en argument de `bash` par le shell_command) ET
+    // sous la limite de rendu de template HA (262144).
+    var CHUNK = 100000;
     if (b64.length <= CHUNK) {
       return netPostJson(url, { b64: b64, device: device, idx: 0, total: 1, id: 'single' });
     }
