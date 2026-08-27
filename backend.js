@@ -251,7 +251,7 @@
       if (!st2.baseUrl || !st2.webhookId) { msg.textContent = 'Renseigne les deux champs.'; return; }
       var d = deriveFromStored(st2);
       msg.textContent = 'Test de lecture…';
-      httpGet(d.dataUrl + (d.dataUrl.indexOf('?') === -1 ? '?' : '&') + '_=' + Date.now())
+      netGetJson(d.dataUrl + (d.dataUrl.indexOf('?') === -1 ? '?' : '&') + '_=' + Date.now())
         .then(function () {
           localStorage.setItem(CFG_KEY, JSON.stringify(st2));
           msg.textContent = 'Connecté ✓ — synchronisation activée.';
@@ -286,12 +286,43 @@
     document.body.appendChild(btn);
   }
 
-  // --- accès réseau (CapacitorHttp patche fetch nativement sur l'APK) ------
-  function httpGet(url) {
+  // --- accès réseau -------------------------------------------------------
+  // Sur l'APK on appelle le plugin CapacitorHttp EN DIRECT (comme wikitree.js /
+  // insee.js) : le fetch() « patché » passe par un contournement WebView d'un
+  // bug Chromium qui peut se bloquer / échouer ("Failed to fetch") et ne mord
+  // pas de façon fiable ici. Le natif applique aussi un timeout OkHttp.
+  function isNative() {
+    var Cap = window.Capacitor;
+    return !!(Cap && Cap.isNativePlatform && Cap.isNativePlatform() &&
+      Cap.Plugins && Cap.Plugins.CapacitorHttp);
+  }
+  function netGetJson(url) {
+    if (isNative()) {
+      return window.Capacitor.Plugins.CapacitorHttp.get({
+        url: url, connectTimeout: 8000, readTimeout: 12000
+      }).then(function (res) {
+        if (res.status && (res.status < 200 || res.status >= 300)) throw new Error('HTTP ' + res.status);
+        return (typeof res.data === 'string') ? JSON.parse(res.data) : res.data;
+      });
+    }
     return fetch(url, { cache: 'no-store' }).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     });
+  }
+  function netPostJson(url, bodyObj) {
+    if (isNative()) {
+      return window.Capacitor.Plugins.CapacitorHttp.post({
+        url: url, headers: { 'Content-Type': 'application/json' },
+        data: bodyObj, connectTimeout: 8000, readTimeout: 15000
+      }).then(function (res) {
+        return { ok: !!(res.status >= 200 && res.status < 300), status: res.status };
+      });
+    }
+    return fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(bodyObj)
+    }).then(function (r) { return { ok: r.ok, status: r.status }; });
   }
 
   // --- interception des écritures de l'app --------------------------------
@@ -324,10 +355,7 @@
         enc: 'v1', salt: currentSaltB64(), iv: enc.iv, ct: enc.ct,
         meta: { updatedAt: s.meta.updatedAt, device: deviceId }
       };
-      return fetch(webhookUrl, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ b64: strToB64(JSON.stringify(envelope)), device: deviceId })
-      });
+      return netPostJson(webhookUrl, { b64: strToB64(JSON.stringify(envelope)), device: deviceId });
     }).then(function (r) { if (r && r.ok) lastSyncedJSON = plain; })
       .catch(function (e) { console.warn('genealogie: push échoué', e); });
   }
@@ -344,8 +372,7 @@
     if (!configured() || !subtle) return;
     var dataUrl = resolved().dataUrl;
     var url = dataUrl + (dataUrl.indexOf('?') === -1 ? '?' : '&') + '_=' + Date.now();
-    fetch(url, { cache: 'no-store' })
-      .then(function (r) { return r.ok ? r.json() : null; })
+    netGetJson(url)
       .then(function (env) {
         if (!env) return;
         if (env.enc === 'v1' && env.ct) {
