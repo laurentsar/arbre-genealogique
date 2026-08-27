@@ -26,8 +26,8 @@ un blob **chiffré** — clé dérivée d'un mot de passe famille, AES-GCM).
 Aucun secret n'est embarqué dans le build : la config est saisie **à
 l'exécution** (modèle inspiré de l'app *gesthote*).
 
-1. Installe l'APK (ou ouvre la page servie par HA), appuie sur le bouton
-   flottant **☁** en bas à gauche.
+1. Installe l'APK (ou ouvre la page servie par HA), va dans l'onglet
+   **⚙️ Réglages → ☁ Synchronisation multi-appareils**.
 2. Renseigne l'**URL Home Assistant** (ex. `https://xxxxx.ui.nabu.casa`) et
    l'**identifiant du webhook** (`genealogie_…`), puis *Enregistrer et tester*.
 3. Saisis le **mot de passe famille** au premier échange chiffré.

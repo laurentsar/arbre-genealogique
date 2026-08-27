@@ -206,84 +206,70 @@
     return askPassword(true);
   }
 
-  // --- panneau de configuration du backend (modèle gesthote) --------------
-  // Bouton flottant ☁ (uniquement quand la config n'est PAS bakée dans le
-  // build, i.e. APK Release public / github.io). Sur la page servie par HA, la
-  // config relative est bakée → pas de bouton, UX inchangée.
-  function openConfigPanel() {
-    if (document.getElementById('genCfgOverlay')) return;
-    var st = loadStored();
-    var wrap = document.createElement('div');
-    wrap.id = 'genCfgOverlay';
-    wrap.setAttribute('style', 'position:fixed;inset:0;z-index:99998;background:rgba(20,15,10,.92);' +
-      'display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif');
-    wrap.innerHTML =
-      '<form id="genCfgForm" style="background:#241a12;color:#f0e7db;padding:22px;border-radius:14px;' +
-      'width:min(420px,90vw);box-shadow:0 10px 40px rgba(0,0,0,.5)">' +
-      '<h2 style="margin:0 0 6px;font-size:18px">☁ Synchronisation Home Assistant</h2>' +
-      '<p style="margin:0 0 12px;font-size:13px;opacity:.8">Facultatif. Renseigne ton instance pour partager l\'arbre entre appareils. Sinon l\'app reste locale.</p>' +
-      '<label style="display:block;font-size:13px;margin:10px 0 0">URL Home Assistant (Nabu Casa)' +
-      '<input id="genCfgUrl" type="url" autocapitalize="off" autocomplete="off" ' +
-      'style="width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border-radius:8px;border:1px solid #5a483a;' +
-      'background:#1b130d;color:#fff;font-size:14px" placeholder="https://xxxxx.ui.nabu.casa"></label>' +
-      '<label style="display:block;font-size:13px;margin:10px 0 0">Identifiant du webhook' +
-      '<input id="genCfgHook" type="text" autocapitalize="off" autocomplete="off" ' +
-      'style="width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border-radius:8px;border:1px solid #5a483a;' +
-      'background:#1b130d;color:#fff;font-size:14px" placeholder="genealogie_xxxxxxxx"></label>' +
-      '<p id="genCfgMsg" style="font-size:12px;margin:10px 0 0;min-height:1.2em;opacity:.9"></p>' +
-      '<div style="display:flex;gap:8px;margin-top:12px">' +
-      '<button type="button" id="genCfgCancel" style="flex:1;padding:11px;border:1px solid #5a483a;border-radius:8px;' +
-      'background:transparent;color:#f0e7db;font-size:14px">Fermer</button>' +
-      '<button type="submit" style="flex:2;padding:11px;border:0;border-radius:8px;' +
-      'background:#c8722e;color:#fff;font-size:14px;font-weight:600">Enregistrer et tester</button>' +
-      '</div></form>';
-    document.body.appendChild(wrap);
-    var form = document.getElementById('genCfgForm');
-    var url = document.getElementById('genCfgUrl');
-    var hook = document.getElementById('genCfgHook');
-    var msg = document.getElementById('genCfgMsg');
-    url.value = st.baseUrl || '';
-    hook.value = st.webhookId || '';
-    document.getElementById('genCfgCancel').onclick = function () { wrap.remove(); };
-    form.addEventListener('submit', function (ev) {
-      ev.preventDefault();
-      var st2 = { baseUrl: url.value.trim().replace(/\/+$/, ''), webhookId: hook.value.trim() };
-      if (!st2.baseUrl || !st2.webhookId) { msg.textContent = 'Renseigne les deux champs.'; return; }
-      var d = deriveFromStored(st2);
-      msg.textContent = 'Test de lecture…';
-      netGetJson(d.dataUrl + (d.dataUrl.indexOf('?') === -1 ? '?' : '&') + '_=' + Date.now())
-        .then(function () {
-          localStorage.setItem(CFG_KEY, JSON.stringify(st2));
-          msg.textContent = 'Connecté ✓ — synchronisation activée.';
-          setTimeout(function () { wrap.remove(); pull(); schedulePush(); }, 700);
-        })
-        .catch(function (e) {
-          // Un 404 sur tree.json = instance joignable mais pas encore de données :
-          // on accepte quand même (le premier push créera le fichier).
-          if (/HTTP 404/.test(String(e && e.message))) {
-            localStorage.setItem(CFG_KEY, JSON.stringify(st2));
-            msg.textContent = 'Connecté ✓ (aucune donnée distante encore).';
-            setTimeout(function () { wrap.remove(); schedulePush(); }, 900);
-          } else {
-            msg.textContent = 'Échec : ' + (e && e.message || e) + '. Vérifie l\'URL / le webhook.';
-          }
-        });
-    });
+  // --- configuration DANS l'onglet Réglages (carte #genSyncMount) ---------
+  // Rendu inline dans la vue Paramètres (index.html), pas de bouton flottant.
+  // Page servie par HA (config bakée) : simple statut. Sinon (APK / public) :
+  // formulaire URL + identifiant webhook.
+  function syncInputStyle() {
+    return 'width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border-radius:8px;' +
+      'border:1px solid rgba(128,128,128,.4);background:rgba(0,0,0,.15);color:inherit;font-size:14px';
   }
-
-  function mountConfigButton() {
-    if (hasBaked()) return;               // config déjà fournie par le build (HA)
-    if (document.getElementById('genCfgBtn')) return;
-    var btn = document.createElement('button');
-    btn.id = 'genCfgBtn';
-    btn.type = 'button';
-    btn.title = 'Synchronisation Home Assistant';
-    btn.textContent = configured() ? '☁' : '☁+';
-    btn.setAttribute('style', 'position:fixed;left:12px;bottom:12px;z-index:9000;width:44px;height:44px;' +
-      'border:0;border-radius:50%;background:#c8722e;color:#fff;font-size:20px;line-height:44px;' +
-      'box-shadow:0 4px 14px rgba(0,0,0,.4);cursor:pointer;opacity:.9');
-    btn.onclick = openConfigPanel;
-    document.body.appendChild(btn);
+  function renderSyncSettings() {
+    var el = document.getElementById('genSyncMount');
+    if (!el) return;
+    if (hasBaked()) {
+      el.innerHTML = '<p class="muted">Synchronisation activée via Home Assistant (cette page). ' +
+        'Les modifications de l\'arbre sont partagées automatiquement entre appareils.</p>';
+      return;
+    }
+    var st = loadStored();
+    var conf = configured();
+    el.innerHTML =
+      '<p class="muted">Relie l\'app à ton Home Assistant pour partager l\'arbre entre appareils. ' +
+      'Données chiffrées (mot de passe famille). Facultatif : sans ça, l\'app reste locale.</p>' +
+      '<label style="display:block;font-size:13px;margin:10px 0 0">URL Home Assistant (Nabu Casa)' +
+      '<input id="genSyncUrl" type="url" autocapitalize="off" autocomplete="off" ' +
+      'style="' + syncInputStyle() + '" placeholder="https://xxxxx.ui.nabu.casa"></label>' +
+      '<label style="display:block;font-size:13px;margin:10px 0 0">Identifiant du webhook' +
+      '<input id="genSyncHook" type="text" autocapitalize="off" autocomplete="off" ' +
+      'style="' + syncInputStyle() + '" placeholder="genealogie_xxxxxxxx"></label>' +
+      '<div class="btn-row" style="margin-top:12px">' +
+      '<button id="genSyncSave" class="btn btn-sm" type="button">Enregistrer et tester</button>' +
+      (conf ? '<button id="genSyncForget" class="btn btn-sm btn-ghost" type="button">Oublier</button>' : '') +
+      '</div>' +
+      '<p id="genSyncMsg" class="muted" style="margin-top:8px;min-height:1.2em">' +
+      (conf ? 'État : configuré ✓' : '') + '</p>';
+    document.getElementById('genSyncUrl').value = st.baseUrl || '';
+    document.getElementById('genSyncHook').value = st.webhookId || '';
+    document.getElementById('genSyncSave').onclick = function () {
+      saveSyncConfig(document.getElementById('genSyncUrl').value,
+                     document.getElementById('genSyncHook').value);
+    };
+    var forget = document.getElementById('genSyncForget');
+    if (forget) forget.onclick = function () { localStorage.removeItem(CFG_KEY); renderSyncSettings(); };
+  }
+  function saveSyncConfig(urlVal, hookVal) {
+    var msg = document.getElementById('genSyncMsg');
+    var st2 = { baseUrl: (urlVal || '').trim().replace(/\/+$/, ''), webhookId: (hookVal || '').trim() };
+    if (!st2.baseUrl || !st2.webhookId) { if (msg) msg.textContent = 'Renseigne les deux champs.'; return; }
+    var d = deriveFromStored(st2);
+    if (msg) msg.textContent = 'Test de connexion…';
+    netGetJson(d.dataUrl + (d.dataUrl.indexOf('?') === -1 ? '?' : '&') + '_=' + Date.now())
+      .then(function () { finishSyncSave(st2, 'Connecté ✓ — synchronisation activée.'); })
+      .catch(function (e) {
+        // 404 sur tree.json = instance joignable mais pas encore de données : OK.
+        if (/HTTP 404/.test(String(e && e.message))) {
+          finishSyncSave(st2, 'Connecté ✓ (aucune donnée distante encore).');
+        } else if (msg) {
+          msg.textContent = 'Échec : ' + (e && e.message || e) + '. Vérifie l\'URL / le webhook.';
+        }
+      });
+  }
+  function finishSyncSave(st2, okText) {
+    localStorage.setItem(CFG_KEY, JSON.stringify(st2));
+    var msg = document.getElementById('genSyncMsg');
+    if (msg) msg.textContent = okText;
+    pull(); schedulePush();
   }
 
   // --- accès réseau -------------------------------------------------------
@@ -393,10 +379,16 @@
   }
 
   // --- démarrage ----------------------------------------------------------
+  function initSyncUI() {
+    renderSyncSettings();
+    // Re-rend la carte à chaque ouverture de l'onglet Réglages (statut à jour).
+    var nav = document.querySelector('.bottombar [data-view="settings"]');
+    if (nav) nav.addEventListener('click', function () { setTimeout(renderSyncSettings, 40); });
+  }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', mountConfigButton);
+    document.addEventListener('DOMContentLoaded', initSyncUI);
   } else {
-    mountConfigButton();
+    initSyncUI();
   }
 
   pull();
