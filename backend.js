@@ -10,22 +10,30 @@
  * forgée ne peut pas être déchiffrée. Seuls meta.updatedAt/device restent en
  * clair (comparaison de fraîcheur, last-write-wins).
  *
- * Config (URL webhook + fichier) : window.GENEALOGIE_BACKEND (backend-config.js),
- * présent uniquement sur l'instance HA / le build privé. Absent → module inerte.
+ * CONFIG — deux sources, dans l'ordre (modèle gesthote : rien de secret dans le
+ * build public) :
+ *   1. window.GENEALOGIE_BACKEND (backend-config.js) — présent sur l'instance HA
+ *      servie (URLs RELATIVES, même origine). Prioritaire.
+ *   2. localStorage "genealogie:backend" = { baseUrl, webhookId } — saisi par
+ *      l'utilisateur dans le panneau réglages (bouton ☁ auto-injecté). C'est ce
+ *      qui rend l'APK Release PUBLIC fonctionnel sans embarquer le moindre secret.
+ * Non configuré → aucune sync, l'app reste 100 % locale (localStorage).
  *
  * ⚠️ crypto.subtle exige un contexte sécurisé : OK en https (Nabu Casa) et sur
  * l'APK (https://localhost), PAS en http LAN. Sinon on n'écrit rien (fail-safe).
+ * ⚠️ Depuis un navigateur, une URL HA ABSOLUE tombe sous le coup du CORS. Ça
+ * marche sur l'APK (CapacitorHttp = requêtes natives) et sur la page servie par
+ * HA (même origine, URLs relatives). github.io reste donc une démo.
  */
 (function () {
   'use strict';
 
-  var cfg = window.GENEALOGIE_BACKEND;
-  if (!cfg || !cfg.webhookUrl || !cfg.dataUrl) return;
   if (typeof localStorage === 'undefined') return;
 
   var KEY = 'genealogie:data:v1';   // doit correspondre à store.js
   var PW_KEY = 'genealogie:pw';      // mot de passe famille (mémorisé)
   var SALT_KEY = 'genealogie:salt';  // sel PBKDF2 partagé (base64)
+  var CFG_KEY = 'genealogie:backend'; // config saisie à l'exécution (JSON)
   var ITER = 200000;
 
   var crypto = window.crypto;
@@ -43,6 +51,33 @@
     var v = localStorage.getItem(k);
     if (!v) { v = 'dev' + Math.random().toString(36).slice(2, 10); localStorage.setItem(k, v); }
     return v;
+  }
+
+  // --- résolution de la config (bakée > saisie utilisateur) ----------------
+  function loadStored() {
+    try { return JSON.parse(localStorage.getItem(CFG_KEY) || '{}'); } catch (e) { return {}; }
+  }
+  function deriveFromStored(st) {
+    if (!st || !st.baseUrl || !st.webhookId) return { webhookUrl: '', dataUrl: '' };
+    var base = String(st.baseUrl).trim().replace(/\/+$/, '');
+    var id = String(st.webhookId).trim();
+    return {
+      webhookUrl: base + '/api/webhook/' + id,
+      dataUrl: base + '/local/genealogie/data/tree.json'
+    };
+  }
+  function resolved() {
+    var b = window.GENEALOGIE_BACKEND;
+    if (b && b.webhookUrl && b.dataUrl) return { webhookUrl: b.webhookUrl, dataUrl: b.dataUrl };
+    return deriveFromStored(loadStored());
+  }
+  function hasBaked() {
+    var b = window.GENEALOGIE_BACKEND;
+    return !!(b && b.webhookUrl && b.dataUrl);
+  }
+  function configured() {
+    var r = resolved();
+    return !!(r.webhookUrl && r.dataUrl);
   }
 
   // --- utilitaires base64 <-> octets --------------------------------------
@@ -171,6 +206,94 @@
     return askPassword(true);
   }
 
+  // --- panneau de configuration du backend (modèle gesthote) --------------
+  // Bouton flottant ☁ (uniquement quand la config n'est PAS bakée dans le
+  // build, i.e. APK Release public / github.io). Sur la page servie par HA, la
+  // config relative est bakée → pas de bouton, UX inchangée.
+  function openConfigPanel() {
+    if (document.getElementById('genCfgOverlay')) return;
+    var st = loadStored();
+    var wrap = document.createElement('div');
+    wrap.id = 'genCfgOverlay';
+    wrap.setAttribute('style', 'position:fixed;inset:0;z-index:99998;background:rgba(20,15,10,.92);' +
+      'display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif');
+    wrap.innerHTML =
+      '<form id="genCfgForm" style="background:#241a12;color:#f0e7db;padding:22px;border-radius:14px;' +
+      'width:min(420px,90vw);box-shadow:0 10px 40px rgba(0,0,0,.5)">' +
+      '<h2 style="margin:0 0 6px;font-size:18px">☁ Synchronisation Home Assistant</h2>' +
+      '<p style="margin:0 0 12px;font-size:13px;opacity:.8">Facultatif. Renseigne ton instance pour partager l\'arbre entre appareils. Sinon l\'app reste locale.</p>' +
+      '<label style="display:block;font-size:13px;margin:10px 0 0">URL Home Assistant (Nabu Casa)' +
+      '<input id="genCfgUrl" type="url" autocapitalize="off" autocomplete="off" ' +
+      'style="width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border-radius:8px;border:1px solid #5a483a;' +
+      'background:#1b130d;color:#fff;font-size:14px" placeholder="https://xxxxx.ui.nabu.casa"></label>' +
+      '<label style="display:block;font-size:13px;margin:10px 0 0">Identifiant du webhook' +
+      '<input id="genCfgHook" type="text" autocapitalize="off" autocomplete="off" ' +
+      'style="width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border-radius:8px;border:1px solid #5a483a;' +
+      'background:#1b130d;color:#fff;font-size:14px" placeholder="genealogie_xxxxxxxx"></label>' +
+      '<p id="genCfgMsg" style="font-size:12px;margin:10px 0 0;min-height:1.2em;opacity:.9"></p>' +
+      '<div style="display:flex;gap:8px;margin-top:12px">' +
+      '<button type="button" id="genCfgCancel" style="flex:1;padding:11px;border:1px solid #5a483a;border-radius:8px;' +
+      'background:transparent;color:#f0e7db;font-size:14px">Fermer</button>' +
+      '<button type="submit" style="flex:2;padding:11px;border:0;border-radius:8px;' +
+      'background:#c8722e;color:#fff;font-size:14px;font-weight:600">Enregistrer et tester</button>' +
+      '</div></form>';
+    document.body.appendChild(wrap);
+    var form = document.getElementById('genCfgForm');
+    var url = document.getElementById('genCfgUrl');
+    var hook = document.getElementById('genCfgHook');
+    var msg = document.getElementById('genCfgMsg');
+    url.value = st.baseUrl || '';
+    hook.value = st.webhookId || '';
+    document.getElementById('genCfgCancel').onclick = function () { wrap.remove(); };
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var st2 = { baseUrl: url.value.trim().replace(/\/+$/, ''), webhookId: hook.value.trim() };
+      if (!st2.baseUrl || !st2.webhookId) { msg.textContent = 'Renseigne les deux champs.'; return; }
+      var d = deriveFromStored(st2);
+      msg.textContent = 'Test de lecture…';
+      httpGet(d.dataUrl + (d.dataUrl.indexOf('?') === -1 ? '?' : '&') + '_=' + Date.now())
+        .then(function () {
+          localStorage.setItem(CFG_KEY, JSON.stringify(st2));
+          msg.textContent = 'Connecté ✓ — synchronisation activée.';
+          setTimeout(function () { wrap.remove(); pull(); schedulePush(); }, 700);
+        })
+        .catch(function (e) {
+          // Un 404 sur tree.json = instance joignable mais pas encore de données :
+          // on accepte quand même (le premier push créera le fichier).
+          if (/HTTP 404/.test(String(e && e.message))) {
+            localStorage.setItem(CFG_KEY, JSON.stringify(st2));
+            msg.textContent = 'Connecté ✓ (aucune donnée distante encore).';
+            setTimeout(function () { wrap.remove(); schedulePush(); }, 900);
+          } else {
+            msg.textContent = 'Échec : ' + (e && e.message || e) + '. Vérifie l\'URL / le webhook.';
+          }
+        });
+    });
+  }
+
+  function mountConfigButton() {
+    if (hasBaked()) return;               // config déjà fournie par le build (HA)
+    if (document.getElementById('genCfgBtn')) return;
+    var btn = document.createElement('button');
+    btn.id = 'genCfgBtn';
+    btn.type = 'button';
+    btn.title = 'Synchronisation Home Assistant';
+    btn.textContent = configured() ? '☁' : '☁+';
+    btn.setAttribute('style', 'position:fixed;left:12px;bottom:12px;z-index:9000;width:44px;height:44px;' +
+      'border:0;border-radius:50%;background:#c8722e;color:#fff;font-size:20px;line-height:44px;' +
+      'box-shadow:0 4px 14px rgba(0,0,0,.4);cursor:pointer;opacity:.9');
+    btn.onclick = openConfigPanel;
+    document.body.appendChild(btn);
+  }
+
+  // --- accès réseau (CapacitorHttp patche fetch nativement sur l'APK) ------
+  function httpGet(url) {
+    return fetch(url, { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+  }
+
   // --- interception des écritures de l'app --------------------------------
   var rawSet = localStorage.setItem.bind(localStorage);
   localStorage.setItem = function (k, v) {
@@ -185,6 +308,7 @@
   }
 
   function stampAndPush() {
+    if (!configured()) return;
     if (!subtle) { console.warn('genealogie: crypto indisponible (http ?) → pas de sync'); return; }
     var s = readLocal();
     if (!s) return;
@@ -194,12 +318,13 @@
     var plain = JSON.stringify(s);
     writeLocalSilently(plain);
     if (plain === lastSyncedJSON) return;
+    var webhookUrl = resolved().webhookUrl;
     encryptState(plain).then(function (enc) {
       var envelope = {
         enc: 'v1', salt: currentSaltB64(), iv: enc.iv, ct: enc.ct,
         meta: { updatedAt: s.meta.updatedAt, device: deviceId }
       };
-      return fetch(cfg.webhookUrl, {
+      return fetch(webhookUrl, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ b64: strToB64(JSON.stringify(envelope)), device: deviceId })
       });
@@ -216,8 +341,9 @@
   }
 
   function pull() {
-    if (!subtle) return;
-    var url = cfg.dataUrl + (cfg.dataUrl.indexOf('?') === -1 ? '?' : '&') + '_=' + Date.now();
+    if (!configured() || !subtle) return;
+    var dataUrl = resolved().dataUrl;
+    var url = dataUrl + (dataUrl.indexOf('?') === -1 ? '?' : '&') + '_=' + Date.now();
     fetch(url, { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (env) {
@@ -237,6 +363,13 @@
         }
       })
       .catch(function () { /* hors-ligne : on garde la copie locale */ });
+  }
+
+  // --- démarrage ----------------------------------------------------------
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mountConfigButton);
+  } else {
+    mountConfigButton();
   }
 
   pull();
