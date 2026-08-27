@@ -99,6 +99,9 @@
   function localUpdatedAt() {
     var s = readLocal(); return (s && s.meta && s.meta.updatedAt) || 0;
   }
+  function localHasData() {
+    var s = readLocal(); return !!(s && s.persons && Object.keys(s.persons).length);
+  }
 
   // --- crypto -------------------------------------------------------------
   function getSaltBytes() {
@@ -134,19 +137,47 @@
     });
   }
 
+  // Compression gzip AVANT chiffrement : le JSON généalogie se compresse ~6-10×.
+  // Indispensable car HA limite le rendu d'un template (le webhook passe la
+  // charge via `{{ trigger.json.b64 }}`) à 262144 caractères — un gros arbre
+  // sans compression dépasse et l'écriture échoue. Repli sans zip si l'API
+  // CompressionStream est absente (vieux WebView).
+  function gzipBytes(str) {
+    var enc = new TextEncoder().encode(str);
+    if (typeof CompressionStream === 'undefined') return Promise.resolve({ bytes: enc, zip: null });
+    try {
+      var cs = new CompressionStream('gzip');
+      var w = cs.writable.getWriter(); w.write(enc); w.close();
+      return new Response(cs.readable).arrayBuffer()
+        .then(function (b) { return { bytes: new Uint8Array(b), zip: 'gzip' }; })
+        .catch(function () { return { bytes: enc, zip: null }; });
+    } catch (e) { return Promise.resolve({ bytes: enc, zip: null }); }
+  }
+  function gunzipToStr(bytes) {
+    var ds = new DecompressionStream('gzip');
+    var w = ds.writable.getWriter(); w.write(bytes); w.close();
+    return new Response(ds.readable).arrayBuffer()
+      .then(function (b) { return new TextDecoder().decode(b); });
+  }
+
   function encryptState(plaintextStr) {
     return ensureKey().then(function (k) {
-      var iv = crypto.getRandomValues(new Uint8Array(12));
-      return subtle.encrypt({ name: 'AES-GCM', iv: iv }, k, new TextEncoder().encode(plaintextStr))
-        .then(function (buf) {
-          return { iv: bytesToB64(iv), ct: bytesToB64(new Uint8Array(buf)) };
-        });
+      return gzipBytes(plaintextStr).then(function (p) {
+        var iv = crypto.getRandomValues(new Uint8Array(12));
+        return subtle.encrypt({ name: 'AES-GCM', iv: iv }, k, p.bytes)
+          .then(function (buf) {
+            return { iv: bytesToB64(iv), ct: bytesToB64(new Uint8Array(buf)), zip: p.zip };
+          });
+      });
     });
   }
   function decryptEnvelope(env) {
     return ensureKey().then(function (k) {
       return subtle.decrypt({ name: 'AES-GCM', iv: b64ToBytes(env.iv) }, k, b64ToBytes(env.ct))
-        .then(function (buf) { return new TextDecoder().decode(buf); });
+        .then(function (buf) {
+          if (env.zip === 'gzip') return gunzipToStr(new Uint8Array(buf));
+          return new TextDecoder().decode(buf);
+        });
     });
   }
 
@@ -338,7 +369,7 @@
     var webhookUrl = resolved().webhookUrl;
     encryptState(plain).then(function (enc) {
       var envelope = {
-        enc: 'v1', salt: currentSaltB64(), iv: enc.iv, ct: enc.ct,
+        enc: 'v1', salt: currentSaltB64(), iv: enc.iv, ct: enc.ct, zip: enc.zip,
         meta: { updatedAt: s.meta.updatedAt, device: deviceId }
       };
       return netPostJson(webhookUrl, { b64: strToB64(JSON.stringify(envelope)), device: deviceId });
@@ -392,6 +423,11 @@
   }
 
   pull();
+  // Remonte l'état local au démarrage s'il contient des données (utile après
+  // une 1re configuration : sinon rien ne pousse tant qu'on n'édite pas). Gardé
+  // par localHasData() pour ne jamais écraser le distant avec un arbre vide ;
+  // si le distant est plus récent, pull() a déjà rechargé avant ce push.
+  if (configured() && localHasData()) schedulePush();
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') pull();
   });
