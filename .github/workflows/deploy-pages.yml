@@ -29,16 +29,19 @@ jobs:
         with:
           node-version: 22
 
-      - name: Stamp version (app.js + sw.js depuis package.json)
-        run: node scripts/stamp-version.mjs
+      - name: Build site (stamp version + assemble www/)
+        run: npm run build
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
       - name: Upload site as Pages artifact
+        # www/ = assets app seuls (index, modules, sw, manifest, img). Pas de
+        # node_modules / scripts / .github. backend-config.js absent (gitignoré)
+        # → build public inerte. Mêmes assets que l'APK.
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: www
 
       - name: Deploy to GitHub Pages
         id: deployment

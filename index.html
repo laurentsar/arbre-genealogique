@@ -295,7 +295,18 @@
 <script src="tree.js"></script>
 <script src="fanchart.js"></script>
 <script src="app.js"></script>
-<script src="backend-config.js"></script>
+<!-- backend-config.js : présent seulement sur le build privé « famille » (gitignoré).
+     Absent du build public (github.io) → chargé dynamiquement, onerror silencieux
+     pour éviter un 404 en console. backend.js lit la config paresseusement (au moment
+     de la sync), donc ce chargement asynchrone n'a pas de contrainte d'ordre. -->
+<script>
+  (function () {
+    var s = document.createElement('script');
+    s.src = 'backend-config.js';
+    s.onerror = function () {};
+    document.head.appendChild(s);
+  })();
+</script>
 <script src="backend.js"></script>
 </body>
 </html>
