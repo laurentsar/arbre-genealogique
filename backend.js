@@ -348,6 +348,31 @@
     }).then(function (r) { return { ok: r.ok, status: r.status }; });
   }
 
+  // Envoi en morceaux : HA limite le rendu d'un template à 262144 caractères,
+  // or un gros arbre (photos base64…) dépasse même gzippé. On découpe le b64 en
+  // tranches < limite ; le shell_command HA les réassemble (idx/total/id).
+  function postInChunks(url, b64, device) {
+    var CHUNK = 180000;
+    if (b64.length <= CHUNK) {
+      return netPostJson(url, { b64: b64, device: device, idx: 0, total: 1, id: 'single' });
+    }
+    var total = Math.ceil(b64.length / CHUNK);
+    var id = 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    var i = 0;
+    function next() {
+      if (i >= total) return Promise.resolve({ ok: true, status: 200 });
+      var idx = i++;
+      return netPostJson(url, {
+        b64: b64.slice(idx * CHUNK, (idx + 1) * CHUNK),
+        device: device, idx: idx, total: total, id: id
+      }).then(function (r) {
+        if (!r || !r.ok) throw new Error('chunk ' + idx + '/' + total + ' HTTP ' + (r && r.status));
+        return next();
+      });
+    }
+    return next();
+  }
+
   // --- interception des écritures de l'app --------------------------------
   var rawSet = localStorage.setItem.bind(localStorage);
   localStorage.setItem = function (k, v) {
@@ -382,7 +407,7 @@
         enc: 'v1', salt: currentSaltB64(), iv: enc.iv, ct: enc.ct, zip: enc.zip,
         meta: { updatedAt: s.meta.updatedAt, device: deviceId }
       };
-      return netPostJson(webhookUrl, { b64: strToB64(JSON.stringify(envelope)), device: deviceId });
+      return postInChunks(webhookUrl, strToB64(JSON.stringify(envelope)), deviceId);
     }).then(function (r) {
       if (r && r.ok) { lastSyncedJSON = plain; return 'envoyé'; }
       throw new Error('HTTP ' + (r && r.status));
