@@ -29,6 +29,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Tests
+        run: npm test
+
       - name: Build site (stamp version + assemble www/)
         run: npm run build
 

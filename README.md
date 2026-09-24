@@ -50,7 +50,15 @@ utilise l'APK (requêtes natives) ou la page servie par HA.
 - **Sauvegarde** : export/import au format JSON (sauvegarde complète) et au
   format **GEDCOM** (standard d'échange, compatible Geneanet, Heredis,
   Gramps…).
-- **PWA installable**, utilisable hors-ligne une fois chargée.
+- **Sauvegardes automatiques** (IndexedDB) : une version au plus toutes les
+  5 minutes, et systématiquement avant une suppression, une fusion, un import
+  ou une réinitialisation — les 10 dernières sont restaurables. Les
+  opérations lourdes proposent aussi « Annuler » juste après.
+- **Recherche** insensible aux accents (nom, lieux, années, notes).
+- **Thème** clair / sombre / automatique, préférences d'affichage mémorisées,
+  navigation au clavier dans l'arbre (Tab, Entrée, I).
+- **PWA installable**, utilisable hors-ligne une fois chargée ; bandeau
+  « Nouvelle version disponible » lors d'une mise à jour.
 
 ## Utilisation
 
@@ -60,6 +68,31 @@ Aucune dépendance ni étape de build : ce sont des fichiers statiques.
 python3 -m http.server 8000
 # puis ouvrir http://localhost:8000/index.html
 ```
+
+## Organisation du code
+
+| Fichier | Rôle |
+|---|---|
+| `util.js` | Fonctions pures (dates, texte, URLs, analyse Geneanet) |
+| `store.js` | Modèle de données, persistance, sauvegardes, doublons |
+| `gedcom.js` | Import / export GEDCOM |
+| `tree.js`, `fanchart.js` | Rendu SVG de l'arbre et de l'éventail |
+| `app.js` | Contrôleur principal (vues, fiche, formulaires, réglages) |
+| `online.js` | Recherche en ligne (WikiTree, Fichier des décès INSEE) |
+| `wikitree.js`, `insee.js` | Accès réseau aux deux sources |
+| `backend.js` | Synchronisation chiffrée facultative |
+
+Tout nouveau script chargé par `index.html` doit aussi figurer dans `SHELL`
+(`sw.js`) et dans `scripts/build-www.mjs` — un test le vérifie.
+
+## Tests
+
+```sh
+npm test
+```
+
+Aucune dépendance : `node --test` (Node 22) exécute les scripts dans un
+contexte isolé. Les tests tournent aussi en CI sur chaque branche.
 
 Les icônes de l'app (`img/icon-*.png`) sont générées par
 `tools_gen_icon.py` (aucune dépendance externe requise).

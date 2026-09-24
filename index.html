@@ -10,6 +10,13 @@
 <link rel="icon" href="img/icon-192.png">
 <link rel="apple-touch-icon" href="img/icon-192.png">
 <link rel="stylesheet" href="styles.css">
+<script>
+  /* Thème appliqué AVANT le premier rendu (évite un flash de l'autre thème). */
+  try {
+    var t = (JSON.parse(localStorage.getItem('genealogie:prefs:v1')) || {}).theme;
+    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+</script>
 </head>
 <body>
 
@@ -32,7 +39,7 @@
         <nav id="treeBreadcrumb" class="tree-breadcrumb" aria-label="Chemin de navigation"></nav>
       </div>
       <div class="tree-toolbar-row">
-        <div class="segmented" id="modeSwitch">
+        <div class="segmented" id="modeSwitch" role="group" aria-label="Type d'arbre">
           <button data-mode="ancestors" class="active">Ascendants</button>
           <button data-mode="descendants">Descendants</button>
         </div>
@@ -44,15 +51,15 @@
       </div>
     </div>
     <div class="tree-canvas-wrap">
-      <svg id="treeSvg" class="tree-canvas"></svg>
+      <svg id="treeSvg" class="tree-canvas" role="group" aria-label="Arbre généalogique : Tab pour parcourir les personnes, Entrée pour centrer, I pour ouvrir la fiche"></svg>
       <div id="treeEmpty" class="tree-empty hidden">
         <p>Aucune personne pour l'instant.</p>
         <button id="btnEmptyAdd" class="btn btn-accent">Ajouter la première personne</button>
       </div>
       <div class="tree-zoom-controls">
-        <button id="btnZoomIn" class="btn btn-round" title="Zoom avant">+</button>
-        <button id="btnZoomOut" class="btn btn-round" title="Zoom arrière">−</button>
-        <button id="btnZoomReset" class="btn btn-round" title="Réinitialiser la vue">⤢</button>
+        <button id="btnZoomIn" class="btn btn-round" title="Zoom avant" aria-label="Zoom avant">+</button>
+        <button id="btnZoomOut" class="btn btn-round" title="Zoom arrière" aria-label="Zoom arrière">−</button>
+        <button id="btnZoomReset" class="btn btn-round" title="Réinitialiser la vue" aria-label="Réinitialiser la vue">⤢</button>
       </div>
       <div class="tree-legend">
         <span><i class="dot dot-union"></i>Union / conjoint</span>
@@ -63,10 +70,10 @@
 
   <section id="view-list" class="view">
     <div class="list-toolbar">
-      <input id="searchInput" type="search" placeholder="Rechercher une personne, un lieu, une note…">
+      <input id="searchInput" type="search" placeholder="Rechercher un nom, un lieu, une année, une note…" aria-label="Rechercher une personne">
       <button id="btnOnlineSearch" class="btn btn-sm" title="Rechercher dans la base généalogique libre WikiTree">🔍 Rechercher en ligne</button>
     </div>
-    <div id="alphaStrip" class="alpha-strip"></div>
+    <div id="alphaStrip" class="alpha-strip" role="navigation" aria-label="Accès par lettre"></div>
     <ul id="personList" class="person-list"></ul>
     <p id="personListEmpty" class="empty-hint hidden">Aucun résultat.</p>
   </section>
@@ -75,69 +82,87 @@
     <div class="settings-card">
       <h2>Personne racine de l'arbre</h2>
       <p class="muted">Celle depuis laquelle l'arbre est affiché par défaut.</p>
-      <select id="rootSelect"></select>
+      <select id="rootSelect" aria-label="Personne racine de l'arbre"></select>
     </div>
 
     <div class="settings-card">
-      <h2>Statistiques</h2>
-      <p><span id="statPersons">0</span> personne(s) · <span id="statUnions">0</span> union(s)</p>
+      <h2>Affichage</h2>
+      <label class="settings-inline">Thème
+        <select id="themeSelect">
+          <option value="auto">Automatique (suit le système)</option>
+          <option value="light">Clair</option>
+          <option value="dark">Sombre</option>
+        </select>
+      </label>
+      <p class="muted" style="margin-top:10px"><span id="statPersons">0</span> personne(s) · <span id="statUnions">0</span> union(s)</p>
     </div>
 
-    <div class="settings-card">
-      <h2>Suggestions</h2>
-      <p class="muted">Scanne l'arbre à la recherche de doublons probables, de fiches incomplètes et de dates suspectes. Se recalcule à chaque ouverture de cet onglet (pas de vérification en arrière-plan).</p>
-      <div class="btn-row" style="margin-bottom:10px">
-        <button id="btnRescan" class="btn btn-sm">🔎 Rescanner</button>
+    <details class="settings-group" id="grpData" data-group="data">
+      <summary><span>💾 Données et sauvegardes</span><span class="muted">export, import, synchronisation, versions</span></summary>
+
+      <div class="settings-card">
+        <h2>Sauvegarde</h2>
+        <p class="muted">Vos données restent uniquement sur cet appareil (stockage local). Exportez régulièrement une sauvegarde.</p>
+        <div class="btn-row">
+          <button id="btnExportJson" class="btn">Exporter (.json)</button>
+          <label class="btn btn-file">Importer (.json)<input id="importJsonInput" type="file" accept=".json,application/json" hidden></label>
+        </div>
+        <p class="muted" style="margin-top:8px">Le téléchargement ne se déclenche pas sur cet appareil ? <button id="btnCopyJson" class="btn btn-sm btn-ghost" type="button">📋 Copier les données à la place</button></p>
       </div>
-      <div id="suggestionsBox"></div>
-    </div>
 
-    <div class="settings-card">
-      <h2>Correspondances en ligne suggérées</h2>
-      <p class="muted">Cherche automatiquement sur WikiTree, pour les fiches sans lien déjà établi (les plus incomplètes en priorité), une correspondance non ambiguë (même année de naissance, ou candidat unique). Comme les « Smart Matches » de MyHeritage, mais gratuit et manuel : rien n'est fait tout seul, tu choisis pour chaque suggestion.</p>
-      <div class="btn-row" style="margin-bottom:10px">
-        <button id="btnFindOnlineSuggestions" class="btn btn-sm">🔎 Chercher des correspondances WikiTree</button>
+      <div class="settings-card">
+        <h2>Format GEDCOM</h2>
+        <p class="muted">Standard d'échange généalogique, compatible avec d'autres logiciels (Geneanet, Heredis, Gramps, MyHeritage…). L'import propose de fusionner avec les données actuelles ou de tout remplacer.</p>
+        <div class="btn-row">
+          <button id="btnExportGedcom" class="btn">Exporter (.ged)</button>
+          <label class="btn btn-file">Importer (.ged)<input id="importGedcomInput" type="file" accept=".ged" hidden></label>
+        </div>
+        <p class="muted" style="margin-top:8px">Le téléchargement ne se déclenche pas sur cet appareil ? <button id="btnCopyGedcom" class="btn btn-sm btn-ghost" type="button">📋 Copier les données à la place</button></p>
       </div>
-      <p id="onlineSuggestStatus" class="muted"></p>
-      <ul id="onlineSuggestList" class="person-list picker-list" style="margin-top:8px"></ul>
-    </div>
 
-    <div class="settings-card">
-      <h2>Sauvegarde</h2>
-      <p class="muted">Vos données restent uniquement sur cet appareil (stockage local). Exportez régulièrement une sauvegarde.</p>
-      <div class="btn-row">
-        <button id="btnExportJson" class="btn">Exporter (.json)</button>
-        <label class="btn btn-file">Importer (.json)<input id="importJsonInput" type="file" accept=".json,application/json" hidden></label>
+      <div class="settings-card" id="genSyncCard">
+        <h2>☁ Synchronisation multi-appareils</h2>
+        <div id="genSyncMount"><p class="muted">Chargement…</p></div>
       </div>
-      <p class="muted" style="margin-top:8px">Le téléchargement ne se déclenche pas sur cet appareil ? <button id="btnCopyJson" class="btn btn-sm btn-ghost" type="button">📋 Copier les données à la place</button></p>
-    </div>
 
-    <div class="settings-card" id="genSyncCard">
-      <h2>☁ Synchronisation multi-appareils</h2>
-      <div id="genSyncMount"><p class="muted">Chargement…</p></div>
-    </div>
-
-    <div class="settings-card">
-      <h2>Sauvegardes automatiques</h2>
-      <p class="muted">Avant chaque modification, l'état précédent est conservé automatiquement — les 10 dernières versions sont gardées, en cas de fausse manip.</p>
-      <ul id="backupsList" class="person-list picker-list"></ul>
-    </div>
-
-    <div class="settings-card">
-      <h2>Format GEDCOM</h2>
-      <p class="muted">Standard d'échange généalogique, compatible avec d'autres logiciels (Geneanet, Heredis, Gramps, MyHeritage…). L'import propose de fusionner avec les données actuelles ou de tout remplacer.</p>
-      <div class="btn-row">
-        <button id="btnExportGedcom" class="btn">Exporter (.ged)</button>
-        <label class="btn btn-file">Importer (.ged)<input id="importGedcomInput" type="file" accept=".ged" hidden></label>
+      <div class="settings-card">
+        <h2>Sauvegardes automatiques</h2>
+        <p class="muted">L'état précédent est conservé automatiquement : au plus une version toutes les 5 minutes pendant l'édition, et systématiquement avant une suppression, une fusion, un import ou une réinitialisation. Les 10 dernières versions sont gardées.</p>
+        <ul id="backupsList" class="person-list picker-list"></ul>
       </div>
-      <p class="muted" style="margin-top:8px">Le téléchargement ne se déclenche pas sur cet appareil ? <button id="btnCopyGedcom" class="btn btn-sm btn-ghost" type="button">📋 Copier les données à la place</button></p>
-    </div>
+    </details>
 
-    <div class="settings-card settings-danger">
-      <h2>Réinitialiser</h2>
-      <p class="muted">Supprime toutes les personnes et unions de cet appareil. Pensez à exporter une sauvegarde avant.</p>
-      <button id="btnReset" class="btn btn-danger">Tout effacer</button>
-    </div>
+    <details class="settings-group" id="grpQuality" data-group="quality">
+      <summary><span>🔎 Qualité de l'arbre</span><span class="muted">doublons, fiches incomplètes, correspondances en ligne</span></summary>
+
+      <div class="settings-card">
+        <h2>Suggestions</h2>
+        <p class="muted">Scanne l'arbre à la recherche de doublons probables, de fiches incomplètes et de dates suspectes. Recalculé quand les données changent (pas de vérification en arrière-plan).</p>
+        <div class="btn-row" style="margin-bottom:10px">
+          <button id="btnRescan" class="btn btn-sm">🔎 Rescanner</button>
+        </div>
+        <div id="suggestionsBox"></div>
+      </div>
+
+      <div class="settings-card">
+        <h2>Correspondances en ligne suggérées</h2>
+        <p class="muted">Cherche automatiquement sur WikiTree, pour les fiches sans lien déjà établi (les plus incomplètes en priorité), une correspondance non ambiguë (même année de naissance, ou candidat unique). Comme les « Smart Matches » de MyHeritage, mais gratuit et manuel : rien n'est fait tout seul, tu choisis pour chaque suggestion.</p>
+        <div class="btn-row" style="margin-bottom:10px">
+          <button id="btnFindOnlineSuggestions" class="btn btn-sm">🔎 Chercher des correspondances WikiTree</button>
+        </div>
+        <p id="onlineSuggestStatus" class="muted"></p>
+        <ul id="onlineSuggestList" class="person-list picker-list" style="margin-top:8px"></ul>
+      </div>
+    </details>
+
+    <details class="settings-group settings-group-danger" id="grpDanger" data-group="danger">
+      <summary><span>⚠️ Zone sensible</span><span class="muted">réinitialisation</span></summary>
+      <div class="settings-card settings-danger">
+        <h2>Réinitialiser</h2>
+        <p class="muted">Supprime toutes les personnes et unions de cet appareil. Pensez à exporter une sauvegarde avant.</p>
+        <button id="btnReset" class="btn btn-danger">Tout effacer</button>
+      </div>
+    </details>
 
     <div class="settings-card">
       <h2>À propos</h2>
@@ -147,10 +172,10 @@
 
 </main>
 
-<nav class="bottombar">
-  <button data-view="tree" class="active">🌳<span>Arbre</span></button>
-  <button data-view="list">👤<span>Personnes</span></button>
-  <button data-view="settings">⚙️<span>Réglages</span></button>
+<nav class="bottombar" aria-label="Navigation principale">
+  <button data-view="tree" class="active"><span aria-hidden="true">🌳</span><span>Arbre</span></button>
+  <button data-view="list"><span aria-hidden="true">👤</span><span>Personnes</span></button>
+  <button data-view="settings"><span aria-hidden="true">⚙️</span><span>Réglages</span></button>
 </nav>
 
 <dialog id="personDialog" class="app-dialog">
@@ -288,6 +313,7 @@
   </div>
 </div>
 
+<script src="util.js"></script>
 <script src="store.js"></script>
 <script src="gedcom.js"></script>
 <script src="wikitree.js"></script>
@@ -295,6 +321,7 @@
 <script src="tree.js"></script>
 <script src="fanchart.js"></script>
 <script src="app.js"></script>
+<script src="online.js"></script>
 <!-- backend-config.js : présent seulement sur le build privé « famille » (gitignoré).
      Absent du build public (github.io) → chargé dynamiquement, onerror silencieux
      pour éviter un 404 en console. backend.js lit la config paresseusement (au moment

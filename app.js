@@ -2,50 +2,32 @@
 (function () {
   'use strict';
 
+  var U = window.GenUtil;
+  var $ = U.$, $all = U.$all;
+  var isValidDate = U.isValidDate, formatDateFr = U.formatDateFr, parseDateFr = U.parseDateFr;
+  var escapeHtml = U.escapeHtml, initials = U.initials, timeAgo = U.timeAgo;
+  var splitNameQuery = U.splitNameQuery, groupLetter = U.groupLetter;
+  var geneanetSearchUrl = U.geneanetSearchUrl, antenatiSearchUrl = U.antenatiSearchUrl;
+
   var state = Store.load();
-  var treeMode = 'ancestors';
-  var maxGen = 4;
+
+  // Préférences d'affichage mémorisées d'une session à l'autre (onglet,
+  // mode, générations, personne affichée, thème). Clé séparée des données
+  // généalogiques : jamais exportée ni synchronisée. Tout accès est protégé
+  // (navigation privée, stockage bloqué) : l'app fonctionne sans.
+  var PREFS_KEY = 'genealogie:prefs:v1';
+  function loadPrefs() {
+    try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch (e) { return {}; }
+  }
+  var prefs = loadPrefs();
+  function savePref(k, v) {
+    prefs[k] = v;
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (e) {}
+  }
+
+  var treeMode = prefs.treeMode === 'descendants' ? 'descendants' : 'ancestors';
+  var maxGen = (prefs.maxGen >= 1 && prefs.maxGen <= 7) ? prefs.maxGen : 4;
   var panZoomCtl = null;
-
-  function $(sel) { return document.querySelector(sel); }
-  function $all(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
-
-  // Date interne : vide, ou AAAA / AAAA-MM / AAAA-MM-JJ (mois 01-12, jour 01-31).
-  // Format de stockage inchangé (tri, comparaisons, export GEDCOM, WikiTree/
-  // INSEE en dépendent) — seuls la SAISIE et l'AFFICHAGE passent en JJ/MM/AAAA.
-  function isValidDate(s) {
-    if (!s) return true;
-    var m = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(s);
-    if (!m) return false;
-    if (m[2] && (+m[2] < 1 || +m[2] > 12)) return false;
-    if (m[3] && (+m[3] < 1 || +m[3] > 31)) return false;
-    return true;
-  }
-
-  // AAAA-MM-JJ -> JJ/MM/AAAA (partiel : AAAA-MM -> MM/AAAA, AAAA -> AAAA).
-  function formatDateFr(iso) {
-    if (!iso) return '';
-    var m = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(iso);
-    if (!m) return iso; // format déjà inattendu : affiché tel quel plutôt que masqué
-    var y = m[1], mo = m[2], d = m[3];
-    if (d) return d + '/' + mo + '/' + y;
-    if (mo) return mo + '/' + y;
-    return y;
-  }
-
-  // Saisie utilisateur (JJ/MM/AAAA, MM/AAAA ou AAAA) -> format interne
-  // AAAA-MM-JJ. Accepte aussi directement le format interne en entrée, pour
-  // ne pas casser un collage depuis un ancien export ou un GEDCOM.
-  function parseDateFr(input) {
-    var s = (input || '').trim();
-    if (!s) return '';
-    if (/^\d{4}(-\d{2}(-\d{2})?)?$/.test(s)) return s;
-    var m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(s);
-    if (m) return m[3] + '-' + m[2] + '-' + m[1];
-    m = /^(\d{2})\/(\d{4})$/.exec(s);
-    if (m) return m[2] + '-' + m[1];
-    return s; // invalide : laissé tel quel, isValidDate() le rejettera avec un message clair
-  }
 
   var treeSvg = $('#treeSvg');
   var treeEmpty = $('#treeEmpty');
@@ -59,18 +41,6 @@
   var detailContent = $('#detailContent');
 
   // --- Utilitaires d'affichage ---------------------------------------------
-
-  function escapeHtml(s) {
-    return (s || '').replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-    });
-  }
-
-  function initials(p) {
-    var a = (p.prenom || '').charAt(0);
-    var b = (p.nom || '').charAt(0);
-    return (a + b).toUpperCase() || '?';
-  }
 
   // Pictogramme ♂/♀ en médaillon sur l'avatar : identifie le sexe d'un
   // coup d'œil (couleur seule peu fiable — daltonisme, contraste faible).
@@ -181,19 +151,93 @@
   // Notification légère persistante (indépendante des dialogs) : sert à prévenir
   // du résultat d'une recherche en ligne même si l'utilisateur a fermé la fiche.
   var toastWrap = null;
-  function toast(msg, kind) {
+  // `action` (optionnel) : { label, fn } — bouton dans la notification (ex.
+  // « Annuler » après une suppression). La notification reste alors affichée
+  // plus longtemps. `opts.sticky` : ne disparaît qu'au clic (erreurs graves).
+  // Les notifications sont placées DANS la fenêtre modale ouverte au premier
+  // plan s'il y en a une : une <dialog> modale rend le reste de la page
+  // inerte, et le bouton « Annuler » d'une notification restée dans <body>
+  // serait visible mais impossible à cliquer. Elles reviennent dans <body>
+  // (ou la fenêtre suivante) quand la fenêtre se ferme.
+  function toastHost() {
+    var open = $all('dialog[open]');
+    return open.length ? open[open.length - 1] : document.body;
+  }
+  function rehomeToasts() {
+    if (!toastWrap) return;
+    var host = toastHost();
+    if (toastWrap.parentNode !== host) host.appendChild(toastWrap);
+  }
+  // Ouverture / fermeture de n'importe quelle fenêtre (attribut « open »).
+  if (window.MutationObserver) {
+    new MutationObserver(rehomeToasts).observe(document.body, { attributes: true, attributeFilter: ['open'], subtree: true });
+  }
+
+  function toast(msg, kind, action, opts) {
+    opts = opts || {};
     if (!toastWrap) {
       toastWrap = document.createElement('div');
       toastWrap.className = 'toast-wrap';
-      document.body.appendChild(toastWrap);
+      toastWrap.setAttribute('role', 'status');
+      toastWrap.setAttribute('aria-live', 'polite');
     }
+    rehomeToasts();
     var t = document.createElement('div');
     t.className = 'toast' + (kind ? ' toast-' + kind : '');
-    t.textContent = msg;
-    t.addEventListener('click', function () { t.remove(); });
+    var txt = document.createElement('span');
+    txt.textContent = msg;
+    t.appendChild(txt);
+    function dismiss() { t.classList.remove('show'); setTimeout(function () { t.remove(); }, 300); }
+    if (action) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'toast-action';
+      b.textContent = action.label;
+      b.addEventListener('click', function (e) { e.stopPropagation(); dismiss(); action.fn(); });
+      t.appendChild(b);
+    }
+    t.addEventListener('click', dismiss);
     toastWrap.appendChild(t);
     setTimeout(function () { t.classList.add('show'); }, 10);
-    setTimeout(function () { t.classList.remove('show'); setTimeout(function () { t.remove(); }, 300); }, 6000);
+    if (!opts.sticky) setTimeout(dismiss, action ? 10000 : 6000);
+    return t;
+  }
+
+  // Échec d'enregistrement (quota plein, stockage bloqué) : prévenir
+  // clairement, UNE fois par série d'échecs — sinon la modification est
+  // perdue sans que personne ne le sache.
+  var storageErrorShown = false;
+  Store.onError(function (kind) {
+    if (storageErrorShown) return;
+    storageErrorShown = true;
+    var msg = kind === 'quota'
+      ? '⚠️ Espace de stockage plein : la dernière modification n’a PAS été enregistrée. Exporte une sauvegarde (Réglages → Sauvegarde) sans attendre.'
+      : '⚠️ Enregistrement impossible sur cet appareil : la dernière modification n’a PAS été enregistrée. Exporte une sauvegarde sans attendre.';
+    var t = toast(msg, 'error', { label: 'Exporter', fn: function () { exportJsonFile(); } }, { sticky: true });
+    t.addEventListener('click', function () { storageErrorShown = false; });
+  });
+
+  // Annulation de la dernière opération lourde (suppression, fusion,
+  // détachement, import, restauration, réinitialisation) : on garde une
+  // copie de l'état juste avant, et la notification propose « Annuler ».
+  // Une sauvegarde automatique est aussi forcée (Store.checkpoint) : même
+  // après la disparition de la notification, l'état précédent reste
+  // restaurable depuis Réglages → Sauvegardes automatiques.
+  function withUndo(label, doneMsg, fn) {
+    var snapshot = JSON.stringify(state);
+    Store.checkpoint(label);
+    var result = fn();
+    toast(doneMsg, '', {
+      label: 'Annuler',
+      fn: function () {
+        state = JSON.parse(snapshot);
+        Store.save(state);
+        if (detailDialog.open) closeDetail();
+        refreshAll();
+        toast('↺ Action annulée.');
+      }
+    });
+    return result;
   }
 
   // Ouvre une URL externe (site tiers) dans une VRAIE fenêtre/tâche séparée,
@@ -214,45 +258,6 @@
     document.body.appendChild(a);
     a.click();
     a.remove();
-  }
-
-  // Lien de recherche Geneanet pour une personne (pas d'API publique chez
-  // Geneanet — contrairement à WikiTree/INSEE, ceci ouvre juste LEUR site
-  // dans le navigateur, prérempli, plutôt que d'interroger une donnée dans
-  // l'app). Réduit le nombre de résultats à filtrer soi-même côté Geneanet :
-  // jour/mois de naissance quand connus (pas seulement l'année), et
-  // nom/prénom du conjoint quand il y en a un d'enregistré. Paramètres du
-  // conjoint (nom_conjoint/prenom_conjoint) confirmés via une URL Geneanet
-  // réelle indexée (prenom_conjoint_operateur, sur le même formulaire) —
-  // à noter : Geneanet réserve ce filtre conjoint aux comptes Premium, un
-  // compte gratuit/non connecté verra probablement ce paramètre ignoré.
-  // Jour/mois de naissance non vérifiés de la même façon (aucune URL
-  // indexée trouvée) : ajoutés par convention avec naissance_annee (déjà
-  // en place) — si Geneanet les ignore, la recherche reste fonctionnelle,
-  // juste moins précise.
-  function geneanetSearchUrl(prenom, nom, naissanceDate, conjoint) {
-    var params = 'go=1';
-    if (nom) params += '&nom=' + encodeURIComponent(nom);
-    if (prenom) params += '&prenom=' + encodeURIComponent(prenom);
-    var d = naissanceDate ? naissanceDate.split('-') : [];
-    if (d[0]) params += '&naissance_annee=' + encodeURIComponent(d[0]);
-    if (d[1]) params += '&naissance_mois=' + encodeURIComponent(parseInt(d[1], 10));
-    if (d[2]) params += '&naissance_jour=' + encodeURIComponent(parseInt(d[2], 10));
-    if (conjoint && conjoint.nom) params += '&nom_conjoint=' + encodeURIComponent(conjoint.nom);
-    if (conjoint && conjoint.prenom) params += '&prenom_conjoint=' + encodeURIComponent(conjoint.prenom);
-    return 'https://www.geneanet.org/fonds/individus/?' + params;
-  }
-
-  // Lien de recherche nominative sur le Portale Antenati (Archives d'État
-  // italiennes, registres d'état civil numérisés — gratuit, pas d'API
-  // publique). Chemin et paramètre « cognome » confirmés via des URLs
-  // indexées réelles (antenati.cultura.gov.it/search-nominative/?cognome=…) ;
-  // « nome » suit la même convention italienne (nome = prénom).
-  function antenatiSearchUrl(prenom, nom) {
-    var params = [];
-    if (nom) params.push('cognome=' + encodeURIComponent(nom));
-    if (prenom) params.push('nome=' + encodeURIComponent(prenom));
-    return 'https://antenati.cultura.gov.it/search-nominative/' + (params.length ? '?' + params.join('&') : '');
   }
 
   // Android ne permet à aucune app tierce de déclencher l'écran divisé par
@@ -276,63 +281,8 @@
     showSplitScreenTipOnce();
   }
 
-  // Reconnaissance d'une fiche individu Geneanet copiée-collée (texte brut,
-  // pas d'API) — évite de retaper chaque champ à la main. Basé sur un
-  // exemple réel :
-  //   Josèphe VIDAILHET
-  //   Née le 21 mars 1759 - Sarrancolin, 65408, Hautes-Pyrénées, ..., France
-  //   Décédée le 19 janvier 1832 - ..., France, à l'âge de 72 ans
-  // Le sexe se déduit du « e » de « Né(e) »/« Décédé(e) » — signal gratuit,
-  // pas besoin de le deviner autrement. Chaque champ manque sans faire
-  // échouer les autres (ex. lieu absent, date approximative « en 1759 »).
-  var GENEANET_MOIS = {
-    'janvier': 1, 'février': 2, 'fevrier': 2, 'mars': 3, 'avril': 4, 'mai': 5, 'juin': 6,
-    'juillet': 7, 'août': 8, 'aout': 8, 'septembre': 9, 'octobre': 10, 'novembre': 11,
-    'décembre': 12, 'decembre': 12
-  };
-  function geneanetDateToISO(jour, moisNom, annee) {
-    var mois = GENEANET_MOIS[(moisNom || '').toLowerCase()];
-    var y = ('0000' + annee).slice(-4);
-    if (!mois) return y;
-    var m = ('0' + mois).slice(-2);
-    var d = ('0' + jour).slice(-2);
-    return y + '-' + m + '-' + d;
-  }
-  function parseGeneanetEventLine(rest) {
-    var dm = /(\d{1,2})\s+(\w+)\s+(\d{3,4})/.exec(rest);
-    var date = '';
-    if (dm) date = geneanetDateToISO(dm[1], dm[2], dm[3]);
-    else { var ym = /\b(\d{3,4})\b/.exec(rest); if (ym) date = ym[1]; }
-    var afterDash = rest.split(' - ')[1] || '';
-    var lieu = afterDash.replace(/,?\s*à l['’]âge de.*$/i, '').trim();
-    return { date: date, lieu: lieu };
-  }
-  function parseGeneanetProfile(text) {
-    var lines = (text || '').split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
-    var result = { prenom: '', nom: '', sexe: null, naissance: null, deces: null };
-    if (!lines.length) return result;
-    // Ligne 1 : « Prénom(s) NOM » — nom de famille en MAJUSCULES (convention
-    // Geneanet, comme le slash du GEDCOM). Recherche lazy du plus petit
-    // préfixe laissant un suffixe entièrement capitalisé.
-    var nameMatch = /^(.+?)\s+([A-ZÀÂÄÇÉÈÊËÏÎÔÖÙÛÜŸÑ][A-ZÀÂÄÇÉÈÊËÏÎÔÖÙÛÜŸÑ'\-\s]*)$/.exec(lines[0]);
-    if (nameMatch) { result.prenom = nameMatch[1].trim(); result.nom = nameMatch[2].trim(); }
-    else { result.prenom = lines[0]; }
-    lines.forEach(function (line) {
-      var mBirth = /^N[ée]e?\s+(?:le|en|vers)\s+(.+)$/i.exec(line);
-      if (mBirth && !result.naissance) {
-        if (result.sexe === null) result.sexe = /^Née\b/i.test(line) ? 'F' : 'H';
-        result.naissance = parseGeneanetEventLine(mBirth[1]);
-      }
-      var mDeath = /^D[ée]c[ée]d[ée]e?\s+(?:le|en|vers)\s+(.+)$/i.exec(line);
-      if (mDeath && !result.deces) {
-        if (result.sexe === null) result.sexe = /^Décédée\b/i.test(line) ? 'F' : 'H';
-        result.deces = parseGeneanetEventLine(mDeath[1]);
-      }
-    });
-    return result;
-  }
   function applyGeneanetPaste(text) {
-    var parsed = parseGeneanetProfile(text);
+    var parsed = U.parseGeneanetProfile(text);
     // `prenom` seul seul ne suffit pas : c'est aussi le repli quand la 1ère
     // ligne ne matche pas le motif « Prénom NOM » (elle est alors reprise
     // telle quelle) — un texte quelconque, sans rapport avec Geneanet,
@@ -433,12 +383,37 @@
 
   // --- Vues ------------------------------------------------------------
 
-  function switchView(name) {
-    $all('.view').forEach(function (v) { v.classList.toggle('active', v.id === 'view-' + name); });
-    $all('.bottombar button').forEach(function (b) { b.classList.toggle('active', b.dataset.view === name); });
+  // Rendu À LA DEMANDE : une modification marque les trois vues « à
+  // rafraîchir », mais seule la vue visible est redessinée tout de suite ;
+  // les autres le seront quand on y reviendra. Évite de recalculer à chaque
+  // modification la liste complète et le scan des doublons (Réglages) alors
+  // qu'on est sur l'arbre.
+  var VIEWS = ['tree', 'list', 'settings'];
+  var currentView = VIEWS.indexOf(prefs.view) !== -1 ? prefs.view : 'tree';
+  var dirty = { tree: true, list: true, settings: true };
+
+  function isActive(name) { return currentView === name; }
+
+  function renderView(name) {
     if (name === 'tree') renderTree();
-    if (name === 'list') renderList();
-    if (name === 'settings') renderSettings();
+    else if (name === 'list') renderList();
+    else if (name === 'settings') renderSettings();
+  }
+
+  function switchView(name) {
+    if (VIEWS.indexOf(name) === -1) name = 'tree';
+    currentView = name;
+    savePref('view', name);
+    $all('.view').forEach(function (v) { v.classList.toggle('active', v.id === 'view-' + name); });
+    $all('.bottombar button').forEach(function (b) {
+      var on = b.dataset.view === name;
+      b.classList.toggle('active', on);
+      if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    });
+    // Réglages : toujours recalculé à l'ouverture (suggestions, sauvegardes
+    // et statut de synchro à jour) — le scan lui-même est mis en cache tant
+    // que les données n'ont pas changé (voir renderSuggestions).
+    if (dirty[name] || name === 'settings') renderView(name);
   }
 
   // Profondeur RÉELLE de générations disponibles (ascendants ou descendants
@@ -447,12 +422,23 @@
   // que 2 ou 3. Protection anti-cycle par CHEMIN (pas un set global) pour ne
   // pas sous-compter une branche légitime qui recroise un même ancêtre par
   // un autre chemin (mariage entre cousins).
+  // Plafonnée à MAX_GEN (le curseur ne va pas au-delà) : le parcours s'arrête
+  // dès cette profondeur atteinte, au lieu d'explorer toute la base (coût
+  // exponentiel sur un grand arbre avec implexe). Résultat mis en cache
+  // jusqu'à la prochaine modification des données.
+  var MAX_GEN = 7;
+  var depthCache = {};
+  var depthCacheRev = -1;
   function realGenDepth(rootId, mode) {
+    var rev = Store.getRevision();
+    if (rev !== depthCacheRev) { depthCache = {}; depthCacheRev = rev; }
+    var key = mode + '|' + rootId;
+    if (depthCache[key] != null) return depthCache[key];
     var maxSeen = 0;
     function rec(id, depth, path) {
-      if (!id) return;
+      if (!id || maxSeen >= MAX_GEN) return;
       maxSeen = Math.max(maxSeen, depth);
-      if (path[id]) return;
+      if (depth >= MAX_GEN || path[id]) return;
       path[id] = true;
       var nextIds = mode === 'descendants'
         ? Store.getChildren(state, id).map(function (c) { return c.id; })
@@ -461,10 +447,13 @@
       delete path[id];
     }
     rec(rootId, 0, {});
+    depthCache[key] = maxSeen;
     return maxSeen;
   }
 
   function renderTree() {
+    if (!isActive('tree')) { dirty.tree = true; return; }
+    dirty.tree = false;
     var hasPersons = Object.keys(state.persons).length > 0;
     treeEmpty.classList.toggle('hidden', hasPersons);
     if (!hasPersons) {
@@ -477,15 +466,22 @@
 
     var genRangeEl = $('#genRange');
     if (genRangeEl) {
-      var realDepth = Math.max(1, realGenDepth(cr, treeMode));
+      var realDepth = Math.min(MAX_GEN, Math.max(1, realGenDepth(cr, treeMode)));
       genRangeEl.max = realDepth;
-      if (maxGen > realDepth) maxGen = realDepth;
-      genRangeEl.value = maxGen;
+      var shownGen = Math.min(maxGen, realDepth);
+      genRangeEl.value = shownGen;
       var genValueEl = $('#genValue');
-      if (genValueEl) genValueEl.textContent = maxGen;
+      if (genValueEl) genValueEl.textContent = shownGen;
     }
 
-    panZoomCtl = Tree.render(treeSvg, state, { rootId: cr, mode: treeMode, maxGen: maxGen, onSelect: focusPerson, onOpen: openDetail });
+    // Navigation au clavier : si le focus était dans l'arbre (nœud activé
+    // par Entrée), on le replace sur la personne désormais au centre.
+    var hadFocus = treeSvg.contains(document.activeElement);
+    panZoomCtl = Tree.render(treeSvg, state, { rootId: cr, mode: treeMode, maxGen: Math.min(maxGen, MAX_GEN), onSelect: focusPerson, onOpen: openDetail });
+    if (hadFocus) {
+      var rootNode = treeSvg.querySelector('.tree-node.is-root');
+      if (rootNode) rootNode.focus();
+    }
     renderBreadcrumb();
     updateNav();
   }
@@ -530,18 +526,28 @@
     if (!nav) return;
     if (!state.rootId || !state.persons[state.rootId]) { nav.innerHTML = ''; return; }
     var trail = rootHistory.concat([currentRoot()]);
+    // Chemin long : on n'affiche que le point de départ, « … » et les
+    // dernières étapes (sinon le fil occupait plusieurs lignes d'écran).
+    var CRUMBS_TAIL = 3;
+    var hiddenFrom = trail.length > CRUMBS_TAIL + 2 ? 1 : -1;
+    var hiddenTo = trail.length - CRUMBS_TAIL;
     nav.innerHTML = trail.map(function (id, i) {
+      if (hiddenFrom !== -1 && i >= hiddenFrom && i < hiddenTo) {
+        return i === hiddenFrom ? '<span class="crumb-sep" aria-hidden="true">›</span><span class="crumb-more" title="' + (hiddenTo - hiddenFrom) + ' étape(s) masquée(s)">…</span>' : '';
+      }
       var p = state.persons[id];
       var label = escapeHtml(p ? Store.fullName(p) : '?');
       var isLast = i === trail.length - 1;
-      var sep = i > 0 ? '<span class="crumb-sep">›</span>' : '';
+      var sep = i > 0 ? '<span class="crumb-sep" aria-hidden="true">›</span>' : '';
       return sep + '<button type="button" class="crumb' + (isLast ? ' current' : '') + '" data-idx="' + i + '"' +
-        (isLast ? ' disabled' : '') + '>' + label + '</button>';
+        (isLast ? ' disabled aria-current="location"' : '') + '>' + label + '</button>';
     }).join('');
-    $all('#treeBreadcrumb .crumb:not(.current)').forEach(function (b) {
-      b.addEventListener('click', function () { goToBreadcrumb(+b.dataset.idx); });
-    });
   }
+  // Un seul écouteur délégué (le fil est reconstruit à chaque rendu).
+  $('#treeBreadcrumb').addEventListener('click', function (e) {
+    var b = e.target.closest('.crumb:not(.current)');
+    if (b) goToBreadcrumb(+b.dataset.idx);
+  });
 
   // NAVIGATION vs RACINE.
   //
@@ -551,7 +557,7 @@
   // transitoire, non sauvegardé) : cliquer une pastille déplace la vue sans
   // perdre la racine. On revient à la racine d'un bouton 🏠, et à la personne
   // précédente d'un bouton Retour.
-  var viewRoot = null;
+  var viewRoot = prefs.viewRoot || null;   // restauré : on retrouve la vue de la dernière session
   var rootHistory = [];
 
   function currentRoot() {
@@ -563,6 +569,7 @@
     if (back) back.disabled = rootHistory.length === 0;
     var home = $('#btnTreeHome');
     if (home) home.disabled = !state.rootId || currentRoot() === state.rootId;
+    if ((prefs.viewRoot || null) !== (viewRoot || null)) savePref('viewRoot', viewRoot);
   }
 
   // Déplacer la VUE (navigation) sans toucher à la racine persistée.
@@ -622,19 +629,14 @@
     navigateTo(id);
   }
 
-  // Première lettre de regroupement (par NOM de famille, plus naturel pour
-  // chercher « les Sarniguet ») — accents neutralisés pour ne pas éclater
-  // « É » et « E » en deux groupes séparés.
-  function groupLetter(s) {
-    // Ignore la ponctuation en tête (ex. surnom entre guillemets dans un nom
-    // GEDCOM : `"Corfic" Morvan`) pour regrouper sur la vraie première lettre
-    // plutôt que de tout jeter dans « # ».
-    var stripped = (s || '').trim().replace(/^[^\p{L}\p{N}]+/u, '');
-    var c = stripped.charAt(0).toUpperCase();
-    if (!c) return '#';
-    var norm = c.normalize('NFD').replace(/[̀-ͯ]/g, '');
-    return /[A-Z]/.test(norm) ? norm : '#';
-  }
+  // Liste des personnes : construite en une seule chaîne HTML (un seul
+  // passage dans le DOM), écouteurs DÉLÉGUÉS sur la liste (au lieu de 4 par
+  // ligne), et affichage par pages de LIST_PAGE lignes — une base de
+  // plusieurs milliers de personnes reste fluide à la saisie.
+  var LIST_PAGE = 200;
+  var listLimit = LIST_PAGE;
+  var listResults = [];
+  var listGroupStart = {};   // lettre → index de la 1re personne du groupe
 
   function renderAlphaStrip(letters) {
     var box = $('#alphaStrip');
@@ -642,15 +644,22 @@
     // Peu d'intérêt à naviguer par lettre sur une petite liste.
     if (letters.length < 4) { box.innerHTML = ''; return; }
     box.innerHTML = letters.map(function (g) {
-      return '<button type="button" data-letter="' + g + '">' + g + '</button>';
+      return '<button type="button" data-letter="' + g + '" aria-label="Aller à la lettre ' + g + '">' + g + '</button>';
     }).join('');
-    $all('#alphaStrip button').forEach(function (b) {
-      b.addEventListener('click', function () {
-        var el = document.getElementById('plh-' + b.dataset.letter);
-        if (el) el.scrollIntoView({ block: 'start' });
-      });
-    });
   }
+  $('#alphaStrip').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-letter]');
+    if (!b) return;
+    var letter = b.dataset.letter;
+    // Groupe pas encore affiché (au-delà de la page courante) : on étend
+    // l'affichage jusqu'à lui avant de s'y rendre.
+    if (!document.getElementById('plh-' + letter) && listGroupStart[letter] != null) {
+      listLimit = Math.ceil((listGroupStart[letter] + 1) / LIST_PAGE) * LIST_PAGE + LIST_PAGE;
+      drawList();
+    }
+    var el = document.getElementById('plh-' + letter);
+    if (el) el.scrollIntoView({ block: 'start' });
+  });
 
   // Bascule vers l'onglet Arbre, centré sur cette personne (navigation
   // depuis la liste, sans passer par la fiche détail).
@@ -660,53 +669,74 @@
   }
 
   function renderList() {
-    var results = Store.searchPersons(state, searchInput.value).slice().sort(function (a, b) {
+    if (!isActive('list')) { dirty.list = true; return; }
+    dirty.list = false;
+    listResults = Store.searchPersons(state, searchInput.value).sort(function (a, b) {
       var ka = (a.nom || a.prenom || ''), kb = (b.nom || b.prenom || '');
       var c = ka.localeCompare(kb, 'fr', { sensitivity: 'base' });
       return c !== 0 ? c : Store.fullName(a).localeCompare(Store.fullName(b), 'fr', { sensitivity: 'base' });
     });
-    personList.innerHTML = '';
+    drawList();
+  }
+
+  function drawList() {
+    var results = listResults;
     personListEmpty.classList.toggle('hidden', results.length > 0);
     var letters = [];
+    listGroupStart = {};
+    results.forEach(function (p, i) {
+      var g = groupLetter(p.nom || p.prenom);
+      if (listGroupStart[g] == null) { listGroupStart[g] = i; letters.push(g); }
+    });
+    var html = '';
     var lastGroup = null;
-    results.forEach(function (p) {
+    var shown = Math.min(results.length, listLimit);
+    for (var i = 0; i < shown; i++) {
+      var p = results[i];
       var g = groupLetter(p.nom || p.prenom);
       if (g !== lastGroup) {
         lastGroup = g;
-        letters.push(g);
-        var h = document.createElement('li');
-        h.className = 'person-list-header';
-        h.id = 'plh-' + g;
-        h.textContent = g;
-        personList.appendChild(h);
+        html += '<li class="person-list-header" id="plh-' + g + '">' + g + '</li>';
       }
-      var li = document.createElement('li');
-      li.innerHTML = avatarHTML(p) +
-        '<div style="flex:1 1 auto;min-width:0"><div class="person-line-name">' + escapeHtml(Store.fullName(p)) + '</div>' +
+      var name = escapeHtml(Store.fullName(p));
+      html += '<li data-id="' + escapeHtml(p.id) + '" tabindex="0">' + avatarHTML(p) +
+        '<div class="person-line-main"><div class="person-line-name">' + name + '</div>' +
         '<div class="person-line-sub">' + escapeHtml(subLine(p)) + '</div></div>' +
-        '<button class="person-nav-btn" type="button" title="Rechercher cette personne en ligne (WikiTree)">🔍</button>' +
-        '<button class="person-nav-btn" type="button" title="Chercher sur Geneanet">🌐</button>' +
-        '<button class="person-nav-btn" type="button" title="Voir dans l’arbre">🌳</button>';
-      var buttons = li.querySelectorAll('.person-nav-btn');
-      buttons[0].addEventListener('click', function (e) {
-        e.stopPropagation();
-        completeFromWikiTree(p.id);
-      });
-      buttons[1].addEventListener('click', function (e) {
-        e.stopPropagation();
-        openGeneanetForPerson(p);
-      });
-      buttons[2].addEventListener('click', function (e) {
-        e.stopPropagation();
-        viewInTree(p.id);
-      });
-      li.addEventListener('click', function () { openDetail(p.id); });
-      personList.appendChild(li);
-    });
+        '<button class="person-nav-btn" type="button" data-nav="wikitree" title="Rechercher cette personne en ligne (WikiTree)" aria-label="Rechercher ' + name + ' sur WikiTree">🔍</button>' +
+        '<button class="person-nav-btn" type="button" data-nav="geneanet" title="Chercher sur Geneanet" aria-label="Chercher ' + name + ' sur Geneanet">🌐</button>' +
+        '<button class="person-nav-btn" type="button" data-nav="tree" title="Voir dans l’arbre" aria-label="Voir ' + name + ' dans l’arbre">🌳</button>' +
+        '</li>';
+    }
+    if (results.length > shown) {
+      var more = Math.min(LIST_PAGE, results.length - shown);
+      html += '<li class="person-list-more"><button type="button" class="btn btn-sm" data-more="1">Afficher ' + more +
+        ' de plus (' + (results.length - shown) + ' restante(s))</button></li>';
+    }
+    personList.innerHTML = html;
     renderAlphaStrip(letters);
   }
 
+  personList.addEventListener('click', function (e) {
+    if (e.target.closest('[data-more]')) { listLimit += LIST_PAGE; drawList(); return; }
+    var li = e.target.closest('li[data-id]');
+    if (!li) return;
+    var p = state.persons[li.dataset.id];
+    if (!p) return;
+    var nav = e.target.closest('[data-nav]');
+    if (!nav) { openDetail(p.id); return; }
+    if (nav.dataset.nav === 'wikitree') completeFromWikiTree(p.id);
+    else if (nav.dataset.nav === 'geneanet') openGeneanetForPerson(p);
+    else if (nav.dataset.nav === 'tree') viewInTree(p.id);
+  });
+  personList.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' || e.target.tagName !== 'LI' || !e.target.dataset.id) return;
+    e.preventDefault();
+    openDetail(e.target.dataset.id);
+  });
+
   function renderSettings() {
+    if (!isActive('settings')) { dirty.settings = true; return; }
+    dirty.settings = false;
     rootSelect.innerHTML = '';
     Store.allPersons(state).sort(function (a, b) { return Store.fullName(a).localeCompare(Store.fullName(b)); })
       .forEach(function (p) {
@@ -718,47 +748,63 @@
       });
     statPersons.textContent = Object.keys(state.persons).length;
     statUnions.textContent = Object.keys(state.unions).length;
-    renderSuggestions();
-    renderBackups();
+    // Sections repliées : leur contenu (scan des doublons notamment) n'est
+    // calculé qu'à l'ouverture — voir les écouteurs « toggle » ci-dessous.
+    if ($('#grpQuality').open) renderSuggestions();
+    if ($('#grpData').open) renderBackups();
   }
+
+  // Sections repliables des Réglages : état ouvert/fermé mémorisé.
+  var openGroups = prefs.groups || {};
+  $all('.settings-group').forEach(function (d) {
+    var key = d.dataset.group;
+    if (openGroups[key]) d.open = true;
+    d.addEventListener('toggle', function () {
+      openGroups[key] = d.open;
+      savePref('groups', openGroups);
+      if (!d.open) return;
+      if (key === 'quality') renderSuggestions();
+      if (key === 'data') renderBackups();
+    });
+  });
 
   // --- Sauvegardes automatiques (avant chaque écriture, rotation à 10) ---
 
+  // Liste asynchrone (IndexedDB) : un jeton écarte le résultat d'un appel
+  // devenu obsolète si l'onglet a été re-rendu entre-temps.
+  var backupsToken = 0;
   function renderBackups() {
     var listEl = $('#backupsList');
     if (!listEl) return;
-    var backups = Store.listBackups();
-    listEl.innerHTML = '';
-    if (!backups.length) {
-      var empty = document.createElement('li');
-      empty.className = 'empty-hint';
-      empty.style.cursor = 'default';
-      empty.textContent = 'Aucune sauvegarde automatique pour l’instant.';
-      listEl.appendChild(empty);
-      return;
-    }
-    backups.forEach(function (b, i) {
-      var count = 0;
-      try { count = Object.keys(JSON.parse(b.data).persons || {}).length; } catch (e) {}
-      var li = document.createElement('li');
-      li.innerHTML = '<div style="flex:1 1 auto;min-width:0"><div class="person-line-name">' + escapeHtml(timeAgo(b.at)) + '</div>' +
-        '<div class="person-line-sub">' + count + ' personne(s) · ' + escapeHtml(new Date(b.at).toLocaleString('fr-FR')) + '</div></div>' +
-        '<button class="btn btn-sm btn-ghost" type="button" data-restore="' + i + '">↺ Restaurer</button>';
-      listEl.appendChild(li);
-    });
-    $all('#backupsList [data-restore]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var i = Number(btn.dataset.restore);
-        if (!confirm('Restaurer cette version ? Les données actuelles seront remplacées (elles sont elles-mêmes sauvegardées automatiquement avant).')) return;
-        var restored = Store.restoreBackup(i);
-        if (!restored) { alert('Sauvegarde illisible.'); return; }
-        state = restored;
-        Store.save(state);
-        refreshAll();
-        toast('✓ Version restaurée.');
-      });
+    var token = ++backupsToken;
+    Store.listBackups().then(function (backups) {
+      if (token !== backupsToken) return;
+      if (!backups.length) {
+        listEl.innerHTML = '<li class="empty-hint" style="cursor:default">Aucune sauvegarde automatique pour l’instant.</li>';
+        return;
+      }
+      listEl.innerHTML = backups.map(function (b, i) {
+        return '<li><div class="person-line-main"><div class="person-line-name">' + escapeHtml(timeAgo(b.at)) +
+          (b.label ? ' <span class="muted">· ' + escapeHtml(b.label) + '</span>' : '') + '</div>' +
+          '<div class="person-line-sub">' + b.count + ' personne(s) · ' + escapeHtml(new Date(b.at).toLocaleString('fr-FR')) + '</div></div>' +
+          '<button class="btn btn-sm btn-ghost" type="button" data-restore="' + i + '">↺ Restaurer</button></li>';
+      }).join('');
     });
   }
+  $('#backupsList').addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-restore]');
+    if (!btn) return;
+    var i = Number(btn.dataset.restore);
+    if (!confirm('Restaurer cette version ? Les données actuelles seront remplacées (tu pourras annuler juste après).')) return;
+    Store.restoreBackup(i).then(function (restored) {
+      if (!restored) { alert('Sauvegarde illisible.'); return; }
+      withUndo('avant restauration', '✓ Version restaurée.', function () {
+        state = restored;
+        Store.save(state);
+      });
+      refreshAll();
+    });
+  });
 
   // --- Suggestions : scan de l'arbre (doublons, fiches incomplètes, dates) ---
 
@@ -769,7 +815,7 @@
     var html = shown.map(function (id) {
       var p = state.persons[id];
       if (!p) return '';
-      return '<span class="chip chip-name' + (extraClass ? ' ' + extraClass : '') + '" data-open="' + id + '">' + escapeHtml(Store.fullName(p)) + '</span>';
+      return '<span class="chip chip-name' + (extraClass ? ' ' + extraClass : '') + '" data-open="' + escapeHtml(id) + '">' + escapeHtml(Store.fullName(p)) + '</span>';
     }).join('');
     if (ids.length > SUGGEST_CAP) html += '<span class="muted" style="align-self:center;font-size:0.8rem">+' + (ids.length - SUGGEST_CAP) + ' de plus</span>';
     return html;
@@ -791,10 +837,18 @@
     return s;
   }
 
-  function renderSuggestions() {
+  // Le scan (doublons approximatifs notamment) est le calcul le plus lourd de
+  // l'app : mis en cache tant que les données n'ont pas changé (révision du
+  // Store). « Rescanner » force le recalcul.
+  var issuesCache = null, issuesRev = -1;
+  function renderSuggestions(force) {
     var box = $('#suggestionsBox');
     if (!box) return;
-    var issues = Store.scanIssues(state);
+    if (force === true || !issuesCache || issuesRev !== Store.getRevision()) {
+      issuesCache = Store.scanIssues(state);
+      issuesRev = Store.getRevision();
+    }
+    var issues = issuesCache;
     var fuzzy = (issues.fuzzyDuplicates || []).filter(function (d) { return d.confidence !== 'faible'; });
     var total = issues.duplicates.length + fuzzy.length + issues.noDates.length + issues.noSexe.length +
       issues.isolated.length + issues.badDates.length;
@@ -809,7 +863,7 @@
       issues.duplicates.slice(0, SUGGEST_CAP).forEach(function (d) {
         var a = state.persons[d.a], b = state.persons[d.b];
         if (!a || !b) return;
-        html += '<span class="chip chip-add" data-dup="' + d.a + '">' +
+        html += '<span class="chip chip-add" data-dup="' + escapeHtml(d.a) + '">' +
           escapeHtml(Store.fullName(a)) + ' ≈ ' + escapeHtml(Store.fullName(b)) + '</span>';
       });
       if (issues.duplicates.length > SUGGEST_CAP) html += '<span class="muted" style="align-self:center;font-size:0.8rem">+' + (issues.duplicates.length - SUGGEST_CAP) + ' de plus</span>';
@@ -825,7 +879,7 @@
       issues.badDates.slice(0, SUGGEST_CAP).forEach(function (b) {
         var p = state.persons[b.id];
         if (!p) return;
-        html += '<span class="chip chip-name" data-open="' + b.id + '" title="' + escapeHtml(b.reason) + '">' + escapeHtml(Store.fullName(p)) + '</span>';
+        html += '<span class="chip chip-name" data-open="' + escapeHtml(b.id) + '" title="' + escapeHtml(b.reason) + '">' + escapeHtml(Store.fullName(p)) + '</span>';
       });
       if (issues.badDates.length > SUGGEST_CAP) html += '<span class="muted" style="align-self:center;font-size:0.8rem">+' + (issues.badDates.length - SUGGEST_CAP) + ' de plus</span>';
       html += '</div></div>';
@@ -852,11 +906,14 @@
 
   var CONFIDENCE_LABEL = { forte: 'confiance forte', 'moyenne-forte': 'confiance moyenne-forte', moyenne: 'confiance moyenne' };
 
+  // Seules les FUZZY_CAP paires les plus probables sont affichées (liste
+  // déjà triée par score) : en afficher des milliers figeait l'onglet.
+  var FUZZY_CAP = 20;
   function renderFuzzyDuplicates(fuzzy) {
     var ul = $('#fuzzyDupList');
     if (!ul) return;
     ul.innerHTML = '';
-    fuzzy.forEach(function (d) {
+    fuzzy.slice(0, FUZZY_CAP).forEach(function (d) {
       var a = state.persons[d.a], b = state.persons[d.b];
       if (!a || !b) return;
       var keepId = completenessScore(a) >= completenessScore(b) ? d.a : d.b;
@@ -872,19 +929,27 @@
         '<button class="btn btn-sm btn-accent" type="button" data-role="merge">Fusionner</button>' +
         '<button class="btn btn-sm btn-ghost" type="button" data-role="ignore">Ignorer</button>';
       li.querySelector('[data-role="merge"]').addEventListener('click', function () {
-        Store.mergePersons(state, keepId, dropId);
+        withUndo('avant fusion', '✓ Fusionné : ' + Store.fullName(keep), function () {
+          Store.mergePersons(state, keepId, dropId);
+        });
         refreshAll();
-        toast('✓ Fusionné : ' + Store.fullName(keep));
       });
       li.querySelector('[data-role="ignore"]').addEventListener('click', function () { li.remove(); });
       ul.appendChild(li);
     });
+    if (fuzzy.length > FUZZY_CAP) {
+      var more = document.createElement('li');
+      more.className = 'empty-hint';
+      more.style.cursor = 'default';
+      more.textContent = '+' + (fuzzy.length - FUZZY_CAP) + ' autre(s) paire(s), moins probables — fusionne ou ignore celles-ci puis rescanne.';
+      ul.appendChild(more);
+    }
   }
 
+  // Marque toutes les vues à rafraîchir, ne redessine que la vue visible.
   function refreshAll() {
-    renderTree();
-    renderList();
-    renderSettings();
+    dirty.tree = dirty.list = dirty.settings = true;
+    renderView(currentView);
   }
 
   // --- Formulaire personne (créer / modifier) --------------------------
@@ -990,10 +1055,16 @@
           : Store.allPersons(state);
         var excl = opts.excludeIds || [];
         var list = base.filter(function (p) { return excl.indexOf(p.id) === -1; });
-        var qq = (q || '').toLowerCase().trim();
-        if (qq) list = list.filter(function (p) { return Store.fullName(p).toLowerCase().indexOf(qq) !== -1; });
+        // Insensible aux accents et à l'ordre des mots (« helene dupont »
+        // trouve « Hélène Dupont »).
+        var terms = Store.foldText(q).split(/\s+/).filter(Boolean);
+        if (terms.length) list = list.filter(function (p) {
+          var name = Store.foldText(Store.fullName(p));
+          return terms.every(function (t) { return name.indexOf(t) !== -1; });
+        });
         return list.sort(function (a, b) { return Store.fullName(a).localeCompare(Store.fullName(b)); });
       }
+      var PICKER_MAX = 100;
 
       function renderOptions() {
         var results = candidates(search.value);
@@ -1005,14 +1076,21 @@
           listEl.appendChild(li);
           return;
         }
-        results.forEach(function (p) {
-          var li = document.createElement('li');
-          li.innerHTML = avatarHTML(p) +
+        // Plafonné : au-delà, affiner la recherche (liste inutilisable sinon).
+        listEl.innerHTML = results.slice(0, PICKER_MAX).map(function (p) {
+          return '<li data-id="' + escapeHtml(p.id) + '" tabindex="0">' + avatarHTML(p) +
             '<div><div class="person-line-name">' + escapeHtml(Store.fullName(p)) + '</div>' +
-            '<div class="person-line-sub">' + escapeHtml(subLine(p)) + '</div></div>';
-          li.addEventListener('click', function () { closeAndResolve({ id: p.id }); });
-          listEl.appendChild(li);
-        });
+            '<div class="person-line-sub">' + escapeHtml(subLine(p)) + '</div></div></li>';
+        }).join('') + (results.length > PICKER_MAX
+          ? '<li class="empty-hint" style="cursor:default">… ' + (results.length - PICKER_MAX) + ' autre(s) : précise la recherche.</li>'
+          : '');
+      }
+      function onListClick(e) {
+        var li = e.target.closest('li[data-id]');
+        if (li) closeAndResolve({ id: li.dataset.id });
+      }
+      function onListKey(e) {
+        if (e.key === 'Enter' && e.target.dataset && e.target.dataset.id) { e.preventDefault(); closeAndResolve({ id: e.target.dataset.id }); }
       }
 
       function closeAndResolve(val) { handled = true; dlg.close(); finish(val); }
@@ -1034,12 +1112,16 @@
       function onClose() { if (!handled) finish(null); cleanup(); }
       function cleanup() {
         search.removeEventListener('input', onSearch);
+        listEl.removeEventListener('click', onListClick);
+        listEl.removeEventListener('keydown', onListKey);
         newBtn.removeEventListener('click', onNew);
         cancelBtn.removeEventListener('click', onCancel);
         dlg.removeEventListener('close', onClose);
       }
 
       search.addEventListener('input', onSearch);
+      listEl.addEventListener('click', onListClick);
+      listEl.addEventListener('keydown', onListKey);
       newBtn.addEventListener('click', onNew);
       cancelBtn.addEventListener('click', onCancel);
       dlg.addEventListener('close', onClose);
@@ -1057,8 +1139,8 @@
   // nouvelle personne créée depuis ce bouton précis.
   function relSection(title, list, addSpecs, unlinkKind) {
     var chips = list.map(function (p) {
-      var name = '<span class="chip-name" data-open="' + p.id + '">' + escapeHtml(Store.fullName(p)) + '</span>';
-      var rm = unlinkKind ? '<button class="chip-x" type="button" title="Détacher" data-unlink="' + unlinkKind + '" data-id="' + p.id + '">×</button>' : '';
+      var name = '<span class="chip-name" data-open="' + escapeHtml(p.id) + '">' + escapeHtml(Store.fullName(p)) + '</span>';
+      var rm = unlinkKind ? '<button class="chip-x" type="button" title="Détacher" data-unlink="' + unlinkKind + '" data-id="' + escapeHtml(p.id) + '">×</button>' : '';
       return '<span class="chip">' + name + rm + '</span>';
     }).join('');
     var addChips = (addSpecs || []).map(function (spec) {
@@ -1232,7 +1314,9 @@
         gainsHTML(gains) + '</div>' +
         '<button class="btn btn-sm btn-accent" type="button">C’est la même</button>';
       li.querySelector('button').addEventListener('click', function () {
-        Store.mergePersons(state, c.person.id, id);   // garde l'existante, absorbe l'autre
+        withUndo('avant fusion', '✓ Fiches fusionnées : ' + Store.fullName(c.person), function () {
+          Store.mergePersons(state, c.person.id, id);   // garde l'existante, absorbe l'autre
+        });
         dlg.close();
         refreshAll();
         openDetail(c.person.id);
@@ -1253,8 +1337,10 @@
     } else if (act === 'set-home') {
       closeDetail(); setHome(personId);
     } else if (act === 'delete') {
-      if (confirm('Supprimer ' + Store.fullName(p) + ' ? Cette action retire aussi ses liens de parenté.')) {
-        Store.deletePerson(state, personId);
+      if (confirm('Supprimer ' + Store.fullName(p) + ' ? Cette action retire aussi ses liens de parenté (tu pourras annuler juste après).')) {
+        withUndo('avant suppression', '🗑 ' + Store.fullName(p) + ' supprimé(e).', function () {
+          Store.deletePerson(state, personId);
+        });
         closeDetail();
         refreshAll();
       }
@@ -1276,9 +1362,13 @@
   }
 
   function unlinkRelation(kind, personId, otherId) {
-    if (kind === 'parent') Store.removeParent(state, personId, otherId);
-    else if (kind === 'spouse') Store.unlinkSpouse(state, personId, otherId);
-    else if (kind === 'child') Store.unlinkChild(state, personId, otherId);
+    var other = state.persons[otherId];
+    var label = { parent: 'Parent', spouse: 'Conjoint(e)', child: 'Enfant' }[kind] || 'Lien';
+    withUndo('avant détachement', label + ' détaché' + (other ? ' : ' + Store.fullName(other) : '') + '.', function () {
+      if (kind === 'parent') Store.removeParent(state, personId, otherId);
+      else if (kind === 'spouse') Store.unlinkSpouse(state, personId, otherId);
+      else if (kind === 'child') Store.unlinkChild(state, personId, otherId);
+    });
     renderDetail(personId);
     refreshAll();
   }
@@ -1302,13 +1392,24 @@
   $all('#modeSwitch button').forEach(function (b) {
     b.addEventListener('click', function () {
       treeMode = b.dataset.mode;
-      $all('#modeSwitch button').forEach(function (x) { x.classList.toggle('active', x === b); });
+      savePref('treeMode', treeMode);
+      syncModeSwitch();
       renderTree();
     });
   });
 
+  function syncModeSwitch() {
+    $all('#modeSwitch button').forEach(function (x) {
+      var on = x.dataset.mode === treeMode;
+      x.classList.toggle('active', on);
+      x.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  syncModeSwitch();
+
   $('#genRange').addEventListener('input', function (e) {
     maxGen = parseInt(e.target.value, 10);
+    savePref('maxGen', maxGen);
     $('#genValue').textContent = maxGen;
     renderTree();
   });
@@ -1335,16 +1436,23 @@
   $('#btnAddPerson').addEventListener('click', addPersonFlow);
   $('#btnEmptyAdd').addEventListener('click', addPersonFlow);
 
-  searchInput.addEventListener('input', renderList);
+  // Recherche différée (150 ms après la dernière frappe) : pas de tri ni de
+  // reconstruction complète de la liste à chaque touche.
+  searchInput.addEventListener('input', U.debounce(function () {
+    listLimit = LIST_PAGE;
+    renderList();
+    var lv = $('#view-list'); if (lv) lv.scrollTop = 0;
+  }, 150));
   rootSelect.addEventListener('change', function () {
     setHome(rootSelect.value);
   });
 
   // --- Réglages : sauvegarde / GEDCOM / réinitialisation -----------------
 
-  $('#btnExportJson').addEventListener('click', function () {
+  function exportJsonFile() {
     downloadFile('arbre-genealogique.json', Store.exportJSON(state), 'application/json');
-  });
+  }
+  $('#btnExportJson').addEventListener('click', exportJsonFile);
   $('#btnCopyJson').addEventListener('click', function () {
     openCopyExport('arbre-genealogique.json', Store.exportJSON(state));
   });
@@ -1356,9 +1464,11 @@
     reader.onload = function () {
       try {
         var imported = Store.importJSON(reader.result);
-        if (confirm('Remplacer les données actuelles par ce fichier ? Cette action est irréversible.')) {
-          state = imported;
-          Store.save(state);
+        if (confirm('Remplacer les données actuelles par ce fichier ? (tu pourras annuler juste après, ou restaurer depuis les sauvegardes automatiques)')) {
+          withUndo('avant import JSON', '✓ Données importées.', function () {
+            state = imported;
+            Store.save(state);
+          });
           refreshAll();
         }
       } catch (err) {
@@ -1441,6 +1551,7 @@
     btnMerge.style.display = hasExisting ? '' : 'none';
 
     function onMerge() {
+      Store.checkpoint('avant fusion GEDCOM');
       var stats = Store.mergeGedcom(state, imported);
       dlg.close();
       refreshAll();
@@ -1454,9 +1565,11 @@
       alert(msg);
     }
     function onReplace() {
-      if (!confirm('Remplacer les données actuelles par ce fichier GEDCOM ? Cette action est irréversible.')) return;
-      state = imported;
-      Store.save(state);
+      if (!confirm('Remplacer les données actuelles par ce fichier GEDCOM ? (tu pourras annuler juste après, ou restaurer depuis les sauvegardes automatiques)')) return;
+      withUndo('avant import GEDCOM', '✓ Fichier GEDCOM importé.', function () {
+        state = imported;
+        Store.save(state);
+      });
       dlg.close();
       refreshAll();
     }
@@ -1476,807 +1589,135 @@
   }
 
   $('#btnReset').addEventListener('click', function () {
-    if (confirm('Supprimer toutes les personnes et unions de cet appareil ? Cette action est irréversible.')) {
-      state = Store.emptyState();
-      Store.save(state);
-      refreshAll();
-    }
-  });
-
-  // --- Recherche généalogique en ligne (WikiTree) ------------------------
-
-  var onlineDlg = $('#onlineSearchDialog');
-  var wtResults = $('#wtResults');
-  var wtStatus = $('#wtStatus');
-  // Quand non-null : on ne CRÉE pas une nouvelle personne, on COMPLÈTE cette
-  // fiche existante avec le profil WikiTree choisi (bouton « Compléter en ligne »
-  // de la fiche). Null = recherche/import classique depuis l'onglet Personnes.
-  var wtTargetId = null;
-  var wtTimer = null;
-  var wtCurrentCtrl = null; // AbortController de la recherche en cours, pour le bouton Annuler
-  var wtStartTime = null;
-  var inseeCurrentCtrl = null;
-  var inseeStartTime = null;
-  // Compteurs de génération : si une recherche relancée rend l'ancienne
-  // obsolète, sa réponse (qui peut malgré tout finir par arriver bien plus
-  // tard, ex. après un blocage en arrière-plan) ne doit plus écraser
-  // l'affichage de la recherche courante.
-  var wtGen = 0;
-  var inseeGen = 0;
-
-  // Historique des recherches en ligne (indépendant des données généalogiques :
-  // clé localStorage séparée, jamais inclus dans les exports JSON/GEDCOM).
-  var WT_HISTORY_KEY = 'genealogie:wtHistory:v1';
-  var WT_HISTORY_MAX = 15;
-  function loadSearchHistory() {
-    try { return JSON.parse(localStorage.getItem(WT_HISTORY_KEY)) || []; } catch (e) { return []; }
-  }
-  function saveSearchHistory(list) {
-    try { localStorage.setItem(WT_HISTORY_KEY, JSON.stringify(list.slice(0, WT_HISTORY_MAX))); } catch (e) {}
-  }
-  function logSearch(query, count, errorMsg) {
-    if (!query) return;
-    var list = loadSearchHistory().filter(function (h) { return h.query !== query; });
-    list.unshift({ query: query, at: new Date().toISOString(), count: (count == null ? null : count), error: errorMsg || null });
-    saveSearchHistory(list);
-    renderSearchHistory();
-  }
-  function timeAgo(iso) {
-    var s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-    if (s < 60) return 'à l’instant';
-    var m = Math.floor(s / 60); if (m < 60) return 'il y a ' + m + ' min';
-    var h = Math.floor(m / 60); if (h < 24) return 'il y a ' + h + ' h';
-    return 'il y a ' + Math.floor(h / 24) + ' j';
-  }
-  function renderSearchHistory() {
-    var box = $('#wtHistoryBox');
-    if (!box) return;
-    var list = loadSearchHistory();
-    if (!list.length) { box.innerHTML = ''; return; }
-    // Repliée par défaut (<details> sans "open") : utile à retrouver, mais
-    // ne doit pas encombrer la fenêtre de recherche à chaque ouverture.
-    var html = '<details class="history-disclosure"><summary>Recherches récentes (' + list.length + ')</summary><div class="chip-row">';
-    html += list.map(function (h) {
-      var sub = h.error ? 'échec' : (h.count == null ? '' : h.count + ' résultat(s)');
-      return '<span class="chip chip-name" data-history="' + escapeHtml(h.query) + '" title="' + escapeHtml(timeAgo(h.at) + (sub ? ' · ' + sub : '')) + '">' +
-        escapeHtml(h.query) + '</span>';
-    }).join('');
-    html += '</div></details>';
-    box.innerHTML = html;
-    $all('#wtHistoryBox [data-history]').forEach(function (el) {
-      el.addEventListener('click', function () {
-        $('#wtQuery').value = el.dataset.history;
-        runOnlineSearch();
+    if (confirm('Supprimer toutes les personnes et unions de cet appareil ? (tu pourras annuler juste après, ou restaurer depuis les sauvegardes automatiques)')) {
+      withUndo('avant réinitialisation', 'Toutes les données ont été effacées.', function () {
+        state = Store.emptyState();
+        Store.save(state);
       });
-    });
-  }
-
-  // Durée du filet de sécurité côté wikitree.js/insee.js (Promise.race) : sert
-  // ici à donner une barre de progression DÉTERMINÉE plutôt qu'un spinner
-  // indéfini — l'utilisateur voit combien de temps il reste avant l'échec.
-  var SEARCH_TIMEOUT_MS = 30000;
-
-  // Indique quelle voie de transport réseau est active (natif CapacitorHttp
-  // ou fetch() web) : affiché à l'écran pendant la recherche ET répercuté
-  // dans les messages d'erreur de wikitree.js/insee.js — sert de diagnostic
-  // si un blocage réapparaît malgré les filets déjà en place, sans avoir à
-  // deviner quelle voie a réellement été empruntée sur l'appareil.
-  function transportTag() {
-    var Cap = window.Capacitor;
-    return (Cap && Cap.isNativePlatform && Cap.isNativePlatform()) ? 'natif' : 'web';
-  }
-
-  // Indicateur d'avancement de la recherche en ligne (elle peut être lente) :
-  // spinner + compteur de secondes + barre de progression, bouton désactivé
-  // le temps de l'appel.
-  function wtBusy(on, label) {
-    var btn = $('#wtSearchBtn');
-    if (btn) btn.disabled = on;
-    var cancelBtn = $('#wtCancelBtn');
-    if (cancelBtn) cancelBtn.classList.toggle('hidden', !on);
-    if (!on) { wtCurrentCtrl = null; wtStartTime = null; }
-    if (wtTimer) { clearInterval(wtTimer); wtTimer = null; }
-    var progressEl = $('#wtProgress');
-    if (on) {
-      if (progressEl) { progressEl.classList.remove('hidden'); progressEl.value = 0; }
-      var t0 = Date.now();
-      wtStartTime = t0;
-      var draw = function () {
-        var elapsed = Date.now() - t0;
-        // Constaté sur appareil réel : le setTimeout indépendant posé dans
-        // wikitree.js/insee.js (pourtant identique en principe) ne se
-        // déclenche pas de façon fiable en production, alors que CE minuteur
-        // (celui qui affiche le compteur de secondes) continue, lui,
-        // d'avancer normalement jusqu'à 35+ s et au-delà — vérifié sur
-        // plusieurs captures d'écran successives. Plutôt que de chercher à
-        // comprendre pourquoi deux minuteurs a priori équivalents divergent,
-        // on fait reposer l'arrêt forcé sur CELUI dont la fiabilité est
-        // démontrée, ici, sur cet appareil précis.
-        if (elapsed >= SEARCH_TIMEOUT_MS) { wtForceStop('Délai dépassé — réessaie.'); return; }
-        var s = Math.floor(elapsed / 1000);
-        wtStatus.innerHTML = '<span class="spinner"></span> ' + escapeHtml(label) + ' (' + s + ' s, ' + transportTag() + ')';
-        if (progressEl) progressEl.value = Math.min(100, (elapsed / SEARCH_TIMEOUT_MS) * 100);
-      };
-      draw();
-      wtTimer = setInterval(draw, 300);
-    } else if (progressEl) {
-      progressEl.classList.add('hidden');
-    }
-  }
-
-  var inseeBox = $('#inseeBox');
-  var inseeResults = $('#inseeResults');
-  var inseeStatus = $('#inseeStatus');
-
-  function openOnlineSearch() {
-    wtTargetId = null;
-    wtResults.innerHTML = '';
-    wtStatus.textContent = '';
-    if (inseeBox) inseeBox.classList.add('hidden');
-    if (inseeResults) inseeResults.innerHTML = '';
-    if (inseeStatus) inseeStatus.textContent = '';
-    renderSearchHistory();
-    onlineDlg.showModal();
-  }
-
-  // Lance la recherche WikiTree pré-remplie avec le nom de la personne, en mode
-  // « compléter cette fiche » (BDD gratuite, en complément du rapprochement local).
-  // En mode fiche individuelle, on interroge AUSSI le Fichier des décès INSEE
-  // en parallèle : source différente (actes d'état civil français), utile pour
-  // confirmer une date/lieu exact quand WikiTree ne suffit pas ou ne connaît
-  // pas la personne.
-  function completeFromWikiTree(personId) {
-    var p = state.persons[personId];
-    if (!p) return;
-    wtTargetId = personId;
-    $('#wtQuery').value = Store.fullName(p);
-    wtResults.innerHTML = '';
-    wtStatus.textContent = 'Recherche d’une correspondance pour « ' + Store.fullName(p) + ' »…';
-    onlineDlg.showModal();
-    // La section INSEE est rendue visible ICI, inconditionnellement, AVANT
-    // même d'appeler searchInsee() : si searchInsee() ne s'exécute jamais
-    // pour une raison imprévue, "En attente…" reste affiché au lieu que la
-    // section entière disparaisse silencieusement — un signal de diagnostic
-    // direct plutôt qu'une absence invisible.
-    if (inseeBox) { inseeBox.classList.remove('hidden'); }
-    if (inseeStatus) inseeStatus.textContent = 'En attente…';
-    if (inseeResults) inseeResults.innerHTML = '';
-    // Chaque source est isolée dans son propre try/catch : une exception
-    // inattendue dans l'une (ex. accès à un élément DOM absent) ne doit
-    // jamais empêcher l'autre de se lancer — les deux sont indépendantes
-    // et doivent le rester même en cas de bug imprévu dans l'une d'elles.
-    try { searchInsee(p); } catch (e) { inseeForceStop('Erreur interne : ' + e.message); }
-    try { runOnlineSearch(); } catch (e) { wtForceStop('Erreur interne : ' + e.message); }
-  }
-
-  function fmtMatch(m) {
-    var name = ((m.FirstName || '') + ' ' + (m.LastNameAtBirth || m.LastNameCurrent || '')).trim() || m.Name;
-    var b = m.BirthDate && m.BirthDate !== '0000-00-00' ? m.BirthDate.slice(0, 4) : '';
-    var d = m.DeathDate && m.DeathDate !== '0000-00-00' ? m.DeathDate.slice(0, 4) : '';
-    var years = (b || d) ? ' (' + b + (d ? '–' + d : '') + ')' : '';
-    var loc = m.BirthLocation ? ' · ' + m.BirthLocation : '';
-    return { name: name, sub: (m.IsLiving ? 'Vivant · ' : '') + m.Name + years + loc };
-  }
-
-  // Champ de recherche GLOBAL (un seul champ) : dernier mot = nom, le reste
-  // = prénom (un seul mot → traité comme nom, l'index principal de WikiTree).
-  function splitNameQuery(q) {
-    var parts = q.split(/\s+/);
-    if (parts.length === 1) return { fn: '', ln: parts[0] };
-    return { fn: parts.slice(0, -1).join(' '), ln: parts[parts.length - 1] };
-  }
-
-  function runOnlineSearch() {
-    var q = ($('#wtQuery').value || '').trim();
-    if (!q) { wtStatus.textContent = 'Saisis un nom (ou « prénom nom »).'; return; }
-    var parsed = splitNameQuery(q);
-    var fn = parsed.fn, ln = parsed.ln;
-    wtResults.innerHTML = '';
-    wtBusy(true, 'Recherche en ligne…');
-    var myGen = ++wtGen;
-    WikiTree.search(fn, ln, 25, function (ctrl) { wtCurrentCtrl = ctrl; }).then(function (matches) {
-      if (myGen !== wtGen) return; // recherche relancée entre-temps : réponse obsolète, ignorée
-      wtBusy(false);
-      logSearch(q, matches.length);
-      // Notifie même si l'utilisateur a fermé la fenêtre entre-temps.
-      toast('WikiTree : ' + matches.length + ' résultat(s) pour « ' + q + ' »' +
-        (onlineDlg.open ? '' : ' — rouvre « Rechercher en ligne » pour choisir.'));
-      var completing = !!wtTargetId;
-      // En mode « compléter cette fiche », les correspondances déjà écartées
-      // par l'utilisateur pour CETTE personne ne sont plus reproposées.
-      var visibleMatches = completing
-        ? matches.filter(function (m) { return rejectedKeysFor(wtTargetId).indexOf('wt:' + m.Name) === -1; })
-        : matches;
-      if (!visibleMatches.length) {
-        wtStatus.textContent = matches.length ? 'Aucun résultat (les autres ont été écartés pour cette fiche).' : 'Aucun résultat.';
-        return;
-      }
-      wtStatus.textContent = visibleMatches.length + ' résultat(s). ' +
-        (completing ? 'Choisissez la correspondance pour compléter cette fiche :' : 'Choisissez qui importer :');
-      visibleMatches.forEach(function (m) {
-        var info = fmtMatch(m);
-        var gains = (completing && state.persons[wtTargetId]) ? fieldGains(state.persons[wtTargetId], WikiTree.toFields(m)) : [];
-        var li = document.createElement('li');
-        li.innerHTML = avatarHTML({ prenom: m.FirstName, nom: m.LastNameAtBirth || m.LastNameCurrent }) +
-          '<div style="flex:1 1 auto;min-width:0">' +
-          '<div class="person-line-name">' + escapeHtml(info.name) + '</div>' +
-          '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div>' +
-          gainsHTML(gains) + '</div>' +
-          '<button class="btn btn-sm btn-accent" type="button" data-role="complete">' + (completing ? 'Compléter' : 'Importer') + '</button>' +
-          (completing ? '<button class="btn btn-sm btn-ghost" type="button" data-role="dismiss" title="Ne plus proposer cette correspondance pour cette fiche">✕</button>' : '');
-        li.querySelector('[data-role="complete"]').addEventListener('click', function () {
-          if (wtTargetId) completeInto(m.Name, li, wtTargetId);
-          else importFromWikiTree(m.Name, li);
-        });
-        var dismissBtn = li.querySelector('[data-role="dismiss"]');
-        if (dismissBtn) dismissBtn.addEventListener('click', function () {
-          addRejected(wtTargetId, 'wt:' + m.Name);
-          li.remove();
-        });
-        wtResults.appendChild(li);
-      });
-    }).catch(function (err) {
-      if (myGen !== wtGen) return;
-      wtBusy(false);
-      if (err && err.name === 'AbortError') { wtStatus.textContent = 'Recherche annulée.'; return; }
-      logSearch(q, null, err.message);
-      wtStatus.textContent = 'Échec de la recherche : ' + err.message;
-      toast('Recherche WikiTree échouée : ' + err.message, 'error');
-    });
-  }
-
-  // Force la fin de l'état "en cours", QUOI QU'IL ARRIVE côté réseau : on ne
-  // dépend plus de ce que fait ctrl.abort() ni de si/quand la promesse en
-  // cours finit par se résoudre. Le compteur de génération est incrémenté
-  // pour que même une réponse tardive de l'ancienne requête (native, arrivée
-  // bien après) soit ignorée au lieu d'écraser cet état forcé.
-  function wtForceStop(msg) {
-    wtGen++;
-    wtBusy(false);
-    wtStatus.textContent = msg;
-  }
-  function inseeForceStop(msg) {
-    inseeGen++;
-    if (inseeTimer) { clearInterval(inseeTimer); inseeTimer = null; }
-    var progressEl = $('#inseeProgress');
-    if (progressEl) progressEl.classList.add('hidden');
-    inseeCurrentCtrl = null; inseeStartTime = null;
-    inseeStatus.textContent = msg;
-  }
-
-  $('#wtCancelBtn').addEventListener('click', function () {
-    if (wtCurrentCtrl) wtCurrentCtrl.abort();
-    if (inseeCurrentCtrl) inseeCurrentCtrl.abort();
-    wtForceStop('Recherche annulée.');
-    inseeForceStop('Recherche annulée.');
-  });
-
-  // Filet de secours contre le blocage Android : quand l'écran s'éteint ou
-  // que l'appli passe en arrière-plan, le système suspend/retarde fortement
-  // les setTimeout/setInterval — y compris celui des 30 s censé faire
-  // échouer une recherche bloquée. Résultat observé : la recherche reste
-  // affichée "en cours" bien au-delà de 30 s (parfois plusieurs minutes,
-  // voire indéfiniment sur certains ROM comme MIUI/Xiaomi qui gèlent
-  // agressivement la WebView en arrière-plan), le minuteur n'ayant tout
-  // simplement pas eu l'occasion de s'exécuter à temps. Dès qu'on détecte
-  // un retour au premier plan — par n'importe quel signal disponible — on
-  // vérifie nous-mêmes le temps réellement écoulé et on force l'arrêt
-  // immédiatement (wtForceStop/inseeForceStop : mise à jour d'UI synchrone,
-  // pas soumise au même throttling, et qui ne DÉPEND PAS de ce que fait le
-  // réseau derrière) plutôt que d'attendre que le minuteur en retard — ou le
-  // réseau lui-même — finisse par se déclencher. Plusieurs signaux sont
-  // écoutés en parallèle car aucun n'est fiable à 100 % seul selon le
-  // ROM/la version d'Android :
-  //  - visibilitychange / focus (API web standard, WebView) ;
-  //  - resume du plugin natif @capacitor/app (cycle de vie Android natif
-  //    onResume, généralement plus fiable que les événements WebView sur
-  //    les ROM avec gestion agressive de l'arrière-plan) ;
-  //  - toute interaction de l'utilisateur avec le dialogue de recherche
-  //    (dernier recours garanti : dès qu'il retouche l'écran, on nettoie).
-  function checkStaleSearches() {
-    var now = Date.now();
-    if (wtCurrentCtrl && wtStartTime && (now - wtStartTime) >= SEARCH_TIMEOUT_MS) {
-      wtCurrentCtrl.abort();
-      wtForceStop('Délai dépassé — réessaie.');
-    }
-    if (inseeCurrentCtrl && inseeStartTime && (now - inseeStartTime) >= SEARCH_TIMEOUT_MS) {
-      inseeCurrentCtrl.abort();
-      inseeForceStop('Délai dépassé — réessaie.');
-    }
-  }
-  document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible') checkStaleSearches();
-  });
-  window.addEventListener('focus', checkStaleSearches);
-  onlineDlg.addEventListener('click', checkStaleSearches);
-  if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
-    window.Capacitor.Plugins.App.addListener('resume', checkStaleSearches);
-  }
-
-  function fmtInsee(f) {
-    var name = ((f.prenom || '') + ' ' + (f.nom || '')).trim();
-    var b = f.naissance.date ? f.naissance.date.slice(0, 4) : '';
-    var d = f.deces.date ? f.deces.date.slice(0, 4) : '';
-    var years = (b || d) ? ' (' + b + '–' + d + ')' : '';
-    var loc = [f.naissance.lieu, f.deces.lieu].filter(Boolean).join(' → ');
-    return { name: name, sub: 'Décès INSEE' + years + (loc ? ' · ' + loc : '') };
-  }
-
-  // Interroge le Fichier des décès INSEE (état civil français) pour la fiche
-  // ciblée, en complément de WikiTree — ne sert qu'à COMPLÉTER/CONFIRMER
-  // (pas de parents/enfants dans cette source). Échec réseau silencieux :
-  // ne doit jamais bloquer ni polluer la recherche WikiTree en parallèle.
-  var inseeTimer = null;
-  function searchInsee(p) {
-    if (!inseeBox || !p || !p.nom) { if (inseeBox) inseeBox.classList.add('hidden'); return; }
-    var progressEl = $('#inseeProgress');
-    inseeBox.classList.remove('hidden');
-    inseeResults.innerHTML = '';
-    if (inseeTimer) { clearInterval(inseeTimer); inseeTimer = null; }
-    if (progressEl) progressEl.value = 0;
-    var t0 = Date.now();
-    inseeStartTime = t0;
-    var draw = function () {
-      var elapsed = Date.now() - t0;
-      if (elapsed >= SEARCH_TIMEOUT_MS) { inseeForceStop('Délai dépassé — réessaie.'); return; }
-      var s = Math.floor(elapsed / 1000);
-      inseeStatus.innerHTML = '<span class="spinner"></span> Recherche dans le Fichier des décès (INSEE)… (' + s + ' s, ' + transportTag() + ')';
-      if (progressEl) progressEl.value = Math.min(100, (elapsed / SEARCH_TIMEOUT_MS) * 100);
-    };
-    if (progressEl) progressEl.classList.remove('hidden');
-    draw();
-    inseeTimer = setInterval(draw, 300);
-    function stop() {
-      if (inseeTimer) { clearInterval(inseeTimer); inseeTimer = null; }
-      if (progressEl) progressEl.classList.add('hidden');
-      inseeCurrentCtrl = null; inseeStartTime = null;
-    }
-    var year = (p.naissance && p.naissance.date) ? p.naissance.date.slice(0, 4) : '';
-    var myGen = ++inseeGen;
-    InseeDeces.search(p.prenom, p.nom, year, function (ctrl) { inseeCurrentCtrl = ctrl; }).then(function (matches) {
-      if (myGen !== inseeGen) return;
-      stop();
-      var name = Store.fullName(p);
-      toast('INSEE (décès) : ' + matches.length + ' résultat(s) pour « ' + name + ' »' +
-        (onlineDlg.open ? '' : ' — rouvre la recherche pour voir.'));
-      // Les correspondances déjà écartées par l'utilisateur pour CETTE
-      // personne ne sont plus reproposées.
-      var rejected = rejectedKeysFor(p.id);
-      var visibleMatches = matches.filter(function (f) { return rejected.indexOf('insee:' + f.id) === -1; });
-      if (!visibleMatches.length) {
-        inseeStatus.textContent = matches.length
-          ? 'Aucun résultat (les autres ont été écartés pour cette fiche).'
-          : 'Aucun résultat dans le Fichier des décès pour « ' + name + ' ».';
-        return;
-      }
-      inseeStatus.textContent = visibleMatches.length + ' résultat(s) — actes d\'état civil :';
-      visibleMatches.forEach(function (f) {
-        var info = fmtInsee(f);
-        var gains = fieldGains(p, f);
-        var li = document.createElement('li');
-        li.innerHTML = avatarHTML(f) +
-          '<div style="flex:1 1 auto;min-width:0">' +
-          '<div class="person-line-name">' + escapeHtml(info.name) + '</div>' +
-          '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div>' +
-          gainsHTML(gains) + '</div>' +
-          '<button class="btn btn-sm btn-accent" type="button" data-role="complete">Compléter</button>' +
-          '<button class="btn btn-sm btn-ghost" type="button" data-role="dismiss" title="Ne plus proposer cette correspondance pour cette fiche">✕</button>';
-        li.querySelector('[data-role="complete"]').addEventListener('click', function () {
-          completeIntoInsee(f, li, p.id);
-        });
-        li.querySelector('[data-role="dismiss"]').addEventListener('click', function () {
-          addRejected(p.id, 'insee:' + f.id);
-          li.remove();
-        });
-        inseeResults.appendChild(li);
-      });
-    }).catch(function (err) {
-      if (myGen !== inseeGen) return;
-      stop();
-      inseeStatus.textContent = 'Fichier des décès indisponible : ' + err.message;
-    });
-  }
-
-  // Complète la fiche ciblée avec un résultat INSEE (mêmes règles que
-  // completeInto : on ne remplace jamais un champ déjà renseigné).
-  function completeIntoInsee(f, li, targetId) {
-    var btn = li.querySelector('[data-role="complete"]');
-    btn.disabled = true; btn.textContent = '…';
-    var target = state.persons[targetId];
-    if (!target) return;
-    if (!target.prenom) target.prenom = f.prenom;
-    if (!target.nom) target.nom = f.nom;
-    if (target.sexe === '?' && f.sexe && f.sexe !== '?') target.sexe = f.sexe;
-    target.naissance = target.naissance || { date: '', lieu: '' };
-    target.deces = target.deces || { date: '', lieu: '' };
-    if (!target.naissance.date) target.naissance.date = f.naissance.date;
-    if (!target.naissance.lieu) target.naissance.lieu = f.naissance.lieu;
-    if (!target.deces.date) target.deces.date = f.deces.date;
-    if (!target.deces.lieu) target.deces.lieu = f.deces.lieu;
-    if (!target.decede) target.decede = true;
-    if (f.notes && (target.notes || '').indexOf(f.notes) === -1) {
-      target.notes = target.notes ? target.notes + '\n' + f.notes : f.notes;
-    }
-    Store.save(state);
-    refreshAll();
-    toast('✓ Fiche complétée depuis le Fichier des décès (INSEE) : ' + Store.fullName(target));
-    li.remove();
-    openDetail(target.id);
-  }
-
-  function importFromWikiTree(key, li) {
-    var withRel = $('#wtWithRelatives').checked;
-    var btn = li.querySelector('button');
-    wtBusy(true, 'Import des données…');
-    btn.disabled = true; btn.textContent = 'Import…';
-    WikiTree.getRelatives(key).then(function (rel) {
-      // Index des personnes déjà importées (par identifiant WikiTree) pour éviter les doublons.
-      var byKey = {};
-      Object.keys(state.persons).forEach(function (id) {
-        var w = state.persons[id].wikitree;
-        if (w) byKey[w] = state.persons[id];
-      });
-      function ensure(profile) {
-        if (!profile || !profile.Name) return null;
-        if (byKey[profile.Name]) return byKey[profile.Name];
-        var p = Store.addPerson(state, WikiTree.toFields(profile));
-        byKey[profile.Name] = p;
-        return p;
-      }
-      var main = ensure(rel.person);
-      if (withRel) {
-        var father = ensure(rel.parents[rel.fatherId]);
-        var mother = ensure(rel.parents[rel.motherId]);
-        var pIds = [];
-        if (father) pIds.push(father.id);
-        if (mother) pIds.push(mother.id);
-        if (pIds.length) main.parentIds = pIds;
-        if (father && mother) Store.findOrCreateUnion(state, [father.id, mother.id]);
-        var spouseIds = Object.keys(rel.spouses || {})
-          .map(function (k) { return ensure(rel.spouses[k]); })
-          .filter(Boolean).map(function (s) { return s.id; });
-        spouseIds.forEach(function (sid) { Store.findOrCreateUnion(state, [main.id, sid]); });
-        Object.keys(rel.children || {}).forEach(function (k) {
-          var c = ensure(rel.children[k]);
-          if (!c) return;
-          var partners = spouseIds.length ? [main.id, spouseIds[0]] : [main.id];
-          var u = Store.findOrCreateUnion(state, partners);
-          Store.addChildToUnion(state, u.id, c.id);
-        });
-      }
-      // Recentre la VUE sur la personne importée, sans toucher à la racine
-      // persistée : elle ne change que si l'utilisateur le demande explicitement
-      // (bouton « Définir comme racine »).
-      viewRoot = main.id;
+      viewRoot = null;
       rootHistory = [];
-      Store.save(state);
       refreshAll();
-      wtBusy(false);
-      wtStatus.textContent = 'Importé : ' + Store.fullName(main) + (withRel ? ' (avec ses proches)' : '') + '. Vue recentrée.';
-      toast('✓ Importé depuis WikiTree : ' + Store.fullName(main));
-      li.remove();
-    }).catch(function (err) {
-      wtBusy(false);
-      btn.disabled = false; btn.textContent = 'Importer';
-      wtStatus.textContent = 'Échec de l’import : ' + err.message;
-    });
-  }
-
-  // Complète une fiche EXISTANTE avec un profil WikiTree (ne crée pas de doublon
-  // de la personne visée) et raccroche éventuellement ses proches.
-  function completeInto(key, li, targetId) {
-    var btn = li.querySelector('button');
-    btn.disabled = true; btn.textContent = '…';
-    wtBusy(true, 'Complétion des données…');
-    WikiTree.getRelatives(key).then(function (rel) {
-      var target = state.persons[targetId];
-      if (!target) throw new Error('Fiche à compléter introuvable');
-      var f = WikiTree.toFields(rel.person);
-      if (!target.prenom) target.prenom = f.prenom;
-      if (!target.nom) target.nom = f.nom;
-      if (target.sexe === '?' && f.sexe && f.sexe !== '?') target.sexe = f.sexe;
-      target.naissance = target.naissance || { date: '', lieu: '' };
-      target.deces = target.deces || { date: '', lieu: '' };
-      if (!target.naissance.date) target.naissance.date = f.naissance.date;
-      if (!target.naissance.lieu) target.naissance.lieu = f.naissance.lieu;
-      if (!target.deces.date) target.deces.date = f.deces.date;
-      if (!target.deces.lieu) target.deces.lieu = f.deces.lieu;
-      if (!target.decede && f.decede) target.decede = true;
-      if (!target.wikitree) target.wikitree = f.wikitree;
-      if (f.notes && (target.notes || '').indexOf(f.notes) === -1) {
-        target.notes = target.notes ? target.notes + '\n' + f.notes : f.notes;
-      }
-
-      if ($('#wtWithRelatives').checked) {
-        var byKey = {};
-        Object.keys(state.persons).forEach(function (id) {
-          var w = state.persons[id].wikitree;
-          if (w) byKey[w] = state.persons[id];
-        });
-        function ensure(profile) {
-          if (!profile || !profile.Name) return null;
-          if (byKey[profile.Name]) return byKey[profile.Name];
-          var p = Store.addPerson(state, WikiTree.toFields(profile));
-          byKey[profile.Name] = p;
-          return p;
-        }
-        // Parents : seulement si la fiche n'en a pas déjà (on n'écrase rien).
-        if (!(target.parentIds || []).length) {
-          var father = ensure(rel.parents[rel.fatherId]);
-          var mother = ensure(rel.parents[rel.motherId]);
-          var slot = 0;
-          if (father) { Store.setParent(state, target.id, father.id, slot++); }
-          if (mother) { Store.setParent(state, target.id, mother.id, slot++); }
-        }
-        var spouseIds = Object.keys(rel.spouses || {})
-          .map(function (k) { return ensure(rel.spouses[k]); })
-          .filter(Boolean).map(function (s) { return s.id; });
-        spouseIds.forEach(function (sid) { Store.findOrCreateUnion(state, [target.id, sid]); });
-        Object.keys(rel.children || {}).forEach(function (k) {
-          var c = ensure(rel.children[k]);
-          if (!c) return;
-          var partners = spouseIds.length ? [target.id, spouseIds[0]] : [target.id];
-          var u = Store.findOrCreateUnion(state, partners);
-          Store.addChildToUnion(state, u.id, c.id);
-        });
-      }
-
-      Store.save(state);
-      refreshAll();
-      wtBusy(false);
-      toast('✓ Fiche complétée depuis WikiTree : ' + Store.fullName(target));
-      onlineDlg.close();
-      wtTargetId = null;
-      openDetail(target.id);
-    }).catch(function (err) {
-      wtBusy(false);
-      btn.disabled = false; btn.textContent = 'Compléter';
-      wtStatus.textContent = 'Échec : ' + err.message;
-      toast('Complétion échouée : ' + err.message, 'error');
-    });
-  }
-
-  // --- Correspondances WikiTree suggérées (façon « Smart Match » MyHeritage,
-  // mais manuel : on cherche pour toi, tu décides pour chaque suggestion) ---
-
-  // Personnes sans lien WikiTree déjà établi, les plus incomplètes en premier
-  // (probablement les plus utiles à compléter). Plafonné : chaque recherche
-  // est un appel réseau, pas question d'en lancer des centaines d'un coup.
-  function candidatesForOnlineMatch(limit) {
-    return Store.allPersons(state)
-      .filter(function (p) { return !p.wikitree && (p.prenom || p.nom); })
-      .sort(function (a, b) {
-        // Priorité aux fiches qui ONT une date de naissance : c'est ce qui
-        // permet à pickBestMatch() de retenir une correspondance avec
-        // confiance (même année). Sans aucune date, WikiTree renvoie souvent
-        // plusieurs homonymes indépartageables → recherche pour rien. En
-        // cherchant d'abord les fiches datées, les premiers résultats
-        // exploitables arrivent bien plus vite.
-        function hasDate(p) { return !!(p.naissance && p.naissance.date); }
-        var ad = hasDate(a) ? 1 : 0, bd = hasDate(b) ? 1 : 0;
-        if (ad !== bd) return bd - ad;
-        function completeness(p) {
-          var s = 0;
-          if (p.naissance && p.naissance.date) s++;
-          if (p.deces && p.deces.date) s++;
-          if (p.sexe && p.sexe !== '?') s++;
-          return s;
-        }
-        return completeness(a) - completeness(b);
-      })
-      .slice(0, limit);
-  }
-
-  // Correspondances écartées par l'utilisateur (« Signaler incohérence », ou
-  // le bouton ✕ « ne plus proposer » d'une recherche individuelle), par
-  // personne : on ne les représente plus jamais tant qu'on ne trouve pas
-  // autre chose. Clés préfixées par source ('wt:'/'insee:') pour partager le
-  // même stockage sans collision. Clé séparée, jamais incluse dans les exports.
-  var WT_REJECTED_KEY = 'genealogie:wtRejected:v1';
-  function loadRejected() {
-    try { return JSON.parse(localStorage.getItem(WT_REJECTED_KEY)) || {}; } catch (e) { return {}; }
-  }
-  function saveRejected(map) {
-    try { localStorage.setItem(WT_REJECTED_KEY, JSON.stringify(map)); } catch (e) {}
-  }
-  function rejectedKeysFor(personId) { return loadRejected()[personId] || []; }
-  function addRejected(personId, key) {
-    var map = loadRejected();
-    var list = map[personId] || [];
-    if (list.indexOf(key) === -1) list.push(key);
-    map[personId] = list;
-    saveRejected(map);
-  }
-
-  // Ne retient qu'une correspondance NON AMBIGUË parmi les résultats WikiTree :
-  // même année de naissance des deux côtés, ou candidat unique si la fiche
-  // locale n'a pas de date — en écartant les candidats déjà signalés comme
-  // incohérents pour cette personne (sinon ils reviendraient à l'identique).
-  function pickBestMatch(p, matches, rejectedKeys) {
-    var candidates = matches.filter(function (m) { return rejectedKeys.indexOf(m.Name) === -1; });
-    var localYear = p.naissance && p.naissance.date ? p.naissance.date.slice(0, 4) : '';
-    if (localYear) {
-      return candidates.filter(function (m) {
-        var y = m.BirthDate && m.BirthDate !== '0000-00-00' ? m.BirthDate.slice(0, 4) : '';
-        return y === localYear;
-      })[0] || null;
     }
-    return candidates.length === 1 ? candidates[0] : null;
-  }
-
-  // Cherche sur WikiTree pour chaque personne du lot (3 recherches en
-  // parallèle max) et ne retient qu'une correspondance non ambiguë (voir
-  // pickBestMatch) — sinon on ignore silencieusement : mieux vaut rater une
-  // suggestion que proposer un mauvais rapprochement.
-  // onResult(item) est appelé DÈS qu'une correspondance est trouvée (pas
-  // besoin d'attendre la fin du lot pour voir les premiers résultats — un
-  // lot de 10 recherches peut prendre du temps si l'une d'elles traîne).
-  function scanOnlineSuggestions(persons, onProgress, onResult) {
-    var CONCURRENCY = 6; // plus de recherches en vol = premiers résultats plus vite
-    var results = [];
-    var idx = 0, done = 0;
-    return new Promise(function (resolve) {
-      function next() {
-        if (idx >= persons.length) return;
-        var p = persons[idx++];
-        WikiTree.search(p.prenom || '', p.nom || '', 5).then(function (matches) {
-          var best = pickBestMatch(p, matches, rejectedKeysFor(p.id));
-          if (best) {
-            var item = { personId: p.id, match: best };
-            results.push(item);
-            if (onResult) onResult(item);
-          }
-        }).catch(function () { /* recherche individuelle ratée : on l'ignore, ce n'est qu'une suggestion */ })
-          .then(function () {
-            done++;
-            if (onProgress) onProgress(done, persons.length);
-            if (idx < persons.length) next();
-            else if (done === persons.length) resolve(results);
-          });
-      }
-      if (!persons.length) { resolve(results); return; }
-      for (var i = 0; i < Math.min(CONCURRENCY, persons.length); i++) next();
-    });
-  }
-
-  // Construit la ligne d'une suggestion (avatar, apports, actions). Réutilisé
-  // pour l'affichage initial et pour remplacer une ligne après un signalement.
-  function buildSuggestionRow(item) {
-    var p = state.persons[item.personId];
-    if (!p) return null;
-    var info = fmtMatch(item.match);
-    var gains = fieldGains(p, WikiTree.toFields(item.match));
-    var li = document.createElement('li');
-    li.innerHTML = avatarHTML(p) +
-      '<div style="flex:1 1 auto;min-width:0">' +
-      '<div class="person-line-name">' + escapeHtml(Store.fullName(p)) + ' → ' + escapeHtml(info.name) + '</div>' +
-      '<div class="person-line-sub">' + escapeHtml(info.sub) + '</div>' +
-      gainsHTML(gains) + '</div>' +
-      '<button class="btn btn-sm btn-accent" type="button" data-role="complete">Compléter</button>' +
-      '<button class="btn btn-sm btn-ghost" type="button" data-role="reject" title="Signaler que ce n’est pas la bonne personne et en chercher une autre">⚠️</button>' +
-      '<button class="btn btn-sm btn-ghost" type="button" data-role="ignore">Ignorer</button>';
-    li.querySelector('[data-role="complete"]').addEventListener('click', function () { completeInto(item.match.Name, li, item.personId); });
-    li.querySelector('[data-role="ignore"]').addEventListener('click', function () { li.remove(); });
-    li.querySelector('[data-role="reject"]').addEventListener('click', function () { reportMatchInconsistency(item, li); });
-    return li;
-  }
-
-  // « Signaler incohérence » : cette correspondance n'est pas la bonne
-  // personne. On la met de côté (elle ne reviendra plus pour cette fiche) et
-  // on relance une recherche WikiTree en tâche de fond, sans bloquer le reste
-  // de l'écran, pour proposer une autre correspondance si une existe.
-  function reportMatchInconsistency(item, li) {
-    addRejected(item.personId, item.match.Name);
-    var p = state.persons[item.personId];
-    var sub = li.querySelector('.person-line-sub');
-    li.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
-    if (sub) sub.innerHTML = '<span class="spinner"></span> Recherche d’une autre correspondance…';
-    if (!p) { li.remove(); return; }
-    WikiTree.search(p.prenom || '', p.nom || '', 5).then(function (matches) {
-      var best = pickBestMatch(p, matches, rejectedKeysFor(p.id));
-      if (!best) {
-        if (sub) sub.textContent = 'Aucune autre correspondance trouvée.';
-        ['complete', 'reject'].forEach(function (role) {
-          var b = li.querySelector('[data-role="' + role + '"]');
-          if (b) b.remove();
-        });
-        var ignoreBtn = li.querySelector('[data-role="ignore"]');
-        if (ignoreBtn) { ignoreBtn.disabled = false; ignoreBtn.textContent = 'Fermer'; }
-        return;
-      }
-      var fresh = buildSuggestionRow({ personId: item.personId, match: best });
-      if (fresh) li.replaceWith(fresh); else li.remove();
-    }).catch(function () {
-      if (sub) sub.textContent = 'Échec de la nouvelle recherche — réessaie plus tard.';
-      li.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
-    });
-  }
-
-  function findOnlineSuggestions() {
-    var btn = $('#btnFindOnlineSuggestions');
-    var status = $('#onlineSuggestStatus');
-    var listEl = $('#onlineSuggestList');
-    var candidates = candidatesForOnlineMatch(10);
-    if (!candidates.length) { status.textContent = 'Toutes les fiches ont déjà un lien WikiTree (ou aucune personne à vérifier).'; return; }
-    btn.disabled = true;
-    listEl.innerHTML = '';
-    var found = 0, doneCount = 0;
-    function drawStatus() {
-      status.innerHTML = '<span class="spinner"></span> Vérification de ' + candidates.length + ' fiche(s)… (' + doneCount + '/' + candidates.length + ')' +
-        (found ? ' — ' + found + ' trouvée(s) pour l’instant' : '');
-    }
-    drawStatus();
-    scanOnlineSuggestions(candidates, function (done) {
-      doneCount = done;
-      drawStatus();
-    }, function (item) {
-      // Affiché dès qu'une correspondance est trouvée, sans attendre la fin
-      // du lot — une recherche peut mettre jusqu'à 30 s (timeout), pas
-      // question de faire attendre pour les résultats déjà là.
-      found++;
-      var li = buildSuggestionRow(item);
-      if (li) listEl.appendChild(li);
-      drawStatus();
-    }).then(function (results) {
-      btn.disabled = false;
-      status.textContent = results.length
-        ? results.length + ' correspondance(s) suggérée(s) sur ' + candidates.length + ' fiche(s) vérifiée(s).'
-        : 'Aucune correspondance non ambiguë trouvée sur ' + candidates.length + ' fiche(s) vérifiée(s).';
-    });
-  }
-
-  $('#btnFindOnlineSuggestions').addEventListener('click', findOnlineSuggestions);
-
-  $('#btnRescan').addEventListener('click', renderSuggestions);
-  $('#btnOnlineSearch').addEventListener('click', openOnlineSearch);
-  // En mode « compléter cette fiche », un relance manuelle (bouton ou Entrée)
-  // doit aussi relancer la recherche INSEE : sinon elle ne s'affiche qu'à
-  // l'ouverture automatique du dialogue et disparaît de fait dès qu'on
-  // retape/relance la recherche soi-même.
-  function triggerOnlineSearch() {
-    // Voir completeFromWikiTree : sources isolées, l'une ne doit jamais
-    // pouvoir empêcher l'autre de se lancer.
-    if (wtTargetId && state.persons[wtTargetId]) {
-      try { searchInsee(state.persons[wtTargetId]); } catch (e) { inseeForceStop('Erreur interne : ' + e.message); }
-    }
-    try { runOnlineSearch(); } catch (e) { wtForceStop('Erreur interne : ' + e.message); }
-  }
-  $('#wtSearchBtn').addEventListener('click', triggerOnlineSearch);
-  $('#wtGeneanetBtn').addEventListener('click', function () {
-    var q = ($('#wtQuery').value || '').trim();
-    var parsed = q ? splitNameQuery(q) : { fn: '', ln: '' };
-    var target = wtTargetId ? state.persons[wtTargetId] : null;
-    var naissanceDate = target && target.naissance ? target.naissance.date : '';
-    var spouse = target ? Store.getSpouses(state, target.id)[0] : null;
-    var conjoint = spouse ? { prenom: spouse.prenom, nom: spouse.nom } : null;
-    openExternal(geneanetSearchUrl(parsed.fn, parsed.ln, naissanceDate, conjoint));
-    showSplitScreenTipOnce();
   });
-  var wtAntenatiBtn = $('#wtAntenatiBtn');
-  if (wtAntenatiBtn) {
-    wtAntenatiBtn.addEventListener('click', function () {
-      var q = ($('#wtQuery').value || '').trim();
-      var parsed = q ? splitNameQuery(q) : { fn: '', ln: '' };
-      openExternal(antenatiSearchUrl(parsed.fn, parsed.ln));
-      showSplitScreenTipOnce();
-    });
+
+  $('#btnRescan').addEventListener('click', function () { renderSuggestions(true); });
+
+  // Recherche en ligne (WikiTree / INSEE) : implémentée dans online.js,
+  // chargé après ce fichier et branché sur GenApp.online.
+  function completeFromWikiTree(personId) {
+    if (GenApp.online) GenApp.online.completeFromWikiTree(personId);
   }
-  $('#wtClose').addEventListener('click', function () { onlineDlg.close(); });
-  $('#wtQuery').addEventListener('keydown', function (e) { if (e.key === 'Enter') triggerOnlineSearch(); });
+
+  // --- Thème (auto / clair / sombre) --------------------------------------
+
+  // « auto » suit le réglage du système (prefers-color-scheme) ; sinon on
+  // force via l'attribut data-theme sur <html> (voir styles.css).
+  function applyTheme(theme) {
+    var t = theme === 'light' || theme === 'dark' ? theme : 'auto';
+    if (t === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', t);
+    var dark = t === 'dark' || (t === 'auto' && !(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches));
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', dark ? '#1c1410' : '#f6efe4');
+    var sel = $('#themeSelect');
+    if (sel) sel.value = t;
+  }
+  applyTheme(prefs.theme);
+  var themeSel = $('#themeSelect');
+  if (themeSel) themeSel.addEventListener('change', function () {
+    savePref('theme', themeSel.value);
+    applyTheme(themeSel.value);
+  });
+  if (window.matchMedia) {
+    var mq = window.matchMedia('(prefers-color-scheme: light)');
+    var onScheme = function () { applyTheme(prefs.theme); };
+    if (mq.addEventListener) mq.addEventListener('change', onScheme); else if (mq.addListener) mq.addListener(onScheme);
+  }
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.5.10';
+  var APP_VERSION = '1.6.0';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 
-  // --- PWA / démarrage ----------------------------------------------------
+  // --- PWA : mise à jour ----------------------------------------------------
+
+  // Le service worker sert l'app depuis son cache (hors-ligne). Quand une
+  // nouvelle version est publiée, elle s'installe en arrière-plan puis
+  // ATTEND : on affiche un bandeau « Nouvelle version — Recharger » plutôt
+  // que de basculer à l'insu de l'utilisateur (ou d'attendre un 2e lancement).
+  // Rechargement uniquement à la demande : à la 1re visite, le service
+  // worker prend aussi le contrôle de la page (clients.claim → événement
+  // controllerchange) et un rechargement à ce moment-là ferait perdre ce que
+  // l'utilisateur est en train de saisir.
+  var updateRequested = false;
+  function showUpdateBanner(worker) {
+    if ($('#updateBanner')) return;
+    var bar = document.createElement('div');
+    bar.id = 'updateBanner';
+    bar.className = 'update-banner';
+    bar.setAttribute('role', 'status');
+    bar.innerHTML = '<span>Nouvelle version disponible.</span>' +
+      '<button type="button" class="btn btn-sm btn-accent" data-act="reload">Recharger</button>' +
+      '<button type="button" class="btn btn-sm btn-ghost" data-act="later" aria-label="Plus tard">✕</button>';
+    bar.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-act]');
+      if (!b) return;
+      if (b.dataset.act === 'reload') {
+        Store.flush();
+        updateRequested = true;
+        worker.postMessage({ type: 'SKIP_WAITING' });
+      } else {
+        bar.remove();
+      }
+    });
+    document.body.appendChild(bar);
+  }
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function () {
-      navigator.serviceWorker.register('sw.js').catch(function () {});
+      navigator.serviceWorker.register('sw.js').then(function (reg) {
+        if (reg.waiting && navigator.serviceWorker.controller) showUpdateBanner(reg.waiting);
+        reg.addEventListener('updatefound', function () {
+          var nw = reg.installing;
+          if (!nw) return;
+          nw.addEventListener('statechange', function () {
+            // Une installation alors qu'un SW contrôle déjà la page = mise à
+            // jour (et non 1re installation).
+            if (nw.state === 'installed' && navigator.serviceWorker.controller) showUpdateBanner(nw);
+          });
+        });
+        // Vérifie les mises à jour au retour sur l'app (PWA restée ouverte).
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'visible') reg.update().catch(function () {});
+        });
+      }).catch(function () {});
+      var reloading = false;
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (!updateRequested || reloading) return;
+        reloading = true;
+        location.reload();
+      });
     });
   }
 
-  refreshAll();
+  // --- Interface exposée à online.js -----------------------------------------
+
+  var GenApp = window.GenApp = {
+    get state() { return state; },
+    toast: toast,
+    refreshAll: refreshAll,
+    openDetail: openDetail,
+    openExternal: openExternal,
+    showSplitScreenTipOnce: showSplitScreenTipOnce,
+    avatarHTML: avatarHTML,
+    gainsHTML: gainsHTML,
+    fieldGains: fieldGains,
+    // Recentre la vue sur une personne (après un import), sans toucher à la
+    // racine persistée.
+    showInTree: function (id) { viewRoot = id; rootHistory = []; updateNav(); },
+    online: null
+  };
+
+  switchView(currentView);
 })();
