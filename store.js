@@ -29,51 +29,210 @@
     }
   }
 
-  // Sauvegarde automatique : avant chaque écriture qui remplace les données
-  // déjà persistées, l'ancien contenu (celui qu'on est sur le point
-  // d'écraser) est conservé dans une file à part — protection contre une
-  // fausse manip (suppression, fusion, import qui tourne mal) sans action
-  // de l'utilisateur. Rotation : seules les 10 dernières sont gardées, les
-  // plus anciennes sont retirées au fur et à mesure (pas de croissance
-  // indéfinie de localStorage).
-  var BACKUP_KEY = 'genealogie:backups:v1';
+  // Erreurs de persistance (quota plein, stockage bloqué…) : remontées à
+  // l'app via Store.onError pour être AFFICHÉES — une sauvegarde qui échoue
+  // en silence (console seule) fait perdre des modifications sans que
+  // l'utilisateur ne s'en doute.
+  var errorHandlers = [];
+  function onError(fn) { errorHandlers.push(fn); }
+  function reportError(kind, err) {
+    console.error('Store: ' + kind, err);
+    errorHandlers.forEach(function (fn) { try { fn(kind, err); } catch (e) {} });
+  }
+  function isQuotaError(e) {
+    return !!e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22 || e.code === 1014);
+  }
+
+  // --- Sauvegardes automatiques -------------------------------------------
+  // Avant une écriture qui remplace les données persistées, l'ancien contenu
+  // est conservé dans une file à part (protection contre une fausse manip).
+  //
+  // Stockées dans IndexedDB, PAS dans localStorage : localStorage est limité
+  // à ~5 Mo par origine, et 10 copies complètes de l'arbre + l'arbre
+  // lui-même le saturaient dès ~450 Ko de données (l'écriture PRINCIPALE
+  // échouait alors). IndexedDB dispose d'un quota bien plus large et ses
+  // écritures sont asynchrones (pas de gel de l'interface).
+  //
+  // Espacées dans le temps (BACKUP_INTERVAL_MS) plutôt qu'une par
+  // modification : sinon 10 retouches successives d'une même fiche
+  // évinçaient tout l'historique utile. Une sauvegarde est en revanche
+  // FORCÉE avant une opération lourde (suppression, fusion, import,
+  // restauration, réinitialisation) via Store.checkpoint().
+  var LEGACY_BACKUP_KEY = 'genealogie:backups:v1';
   var BACKUP_MAX = 10;
-  function pushBackup(oldRaw) {
+  var BACKUP_INTERVAL_MS = 5 * 60 * 1000;
+  var lastBackupAt = 0;
+  var forceBackupLabel = null;
+
+  var DB_NAME = 'genealogie';
+  var DB_STORE = 'backups';
+  var dbPromise = null;
+  function openDb() {
+    if (dbPromise) return dbPromise;
+    dbPromise = new Promise(function (resolve, reject) {
+      if (typeof indexedDB === 'undefined') { reject(new Error('IndexedDB indisponible')); return; }
+      var req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = function () {
+        var db = req.result;
+        if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE, { keyPath: 'id', autoIncrement: true });
+      };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error); };
+    });
+    dbPromise.catch(function () {});
+    return dbPromise;
+  }
+  function idbAll() {
+    return openDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var req = db.transaction(DB_STORE, 'readonly').objectStore(DB_STORE).getAll();
+        req.onsuccess = function () {
+          resolve((req.result || []).sort(function (a, b) { return b.id - a.id; }));
+        };
+        req.onerror = function () { reject(req.error); };
+      });
+    });
+  }
+  function idbAdd(entry) {
+    return openDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(DB_STORE, 'readwrite');
+        tx.objectStore(DB_STORE).add(entry);
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { reject(tx.error); };
+      });
+    }).then(pruneBackups);
+  }
+  function pruneBackups() {
+    return idbAll().then(function (list) {
+      var extra = list.slice(BACKUP_MAX);
+      if (!extra.length) return;
+      return openDb().then(function (db) {
+        return new Promise(function (resolve) {
+          var tx = db.transaction(DB_STORE, 'readwrite');
+          var st = tx.objectStore(DB_STORE);
+          extra.forEach(function (e) { st.delete(e.id); });
+          tx.oncomplete = function () { resolve(); };
+          tx.onerror = function () { resolve(); };
+        });
+      });
+    });
+  }
+
+  // Reprise des sauvegardes de l'ancien format (dans localStorage) : copiées
+  // dans IndexedDB puis retirées de localStorage — libère d'un coup la
+  // majeure partie du quota consommé. N'efface l'ancienne clé qu'une fois la
+  // copie confirmée.
+  function migrateLegacyBackups() {
+    var raw;
+    try { raw = localStorage.getItem(LEGACY_BACKUP_KEY); } catch (e) { return Promise.resolve(); }
+    if (!raw) return Promise.resolve();
+    var list;
+    try { list = JSON.parse(raw) || []; } catch (e) { list = []; }
+    // Du plus ancien au plus récent, pour conserver l'ordre des identifiants.
+    return list.slice().reverse().reduce(function (p, b) {
+      return p.then(function () {
+        return idbAdd({ at: b.at, data: b.data, count: countPersons(b.data), label: '' });
+      });
+    }, Promise.resolve()).then(function () {
+      try { localStorage.removeItem(LEGACY_BACKUP_KEY); } catch (e) {}
+    }).catch(function (e) { console.warn('Migration des sauvegardes impossible', e); });
+  }
+  var ready = (typeof window === 'undefined') ? Promise.resolve() :
+    migrateLegacyBackups().then(function () { return idbAll(); }).then(function (list) {
+      if (list[0]) lastBackupAt = Math.max(lastBackupAt, new Date(list[0].at).getTime() || 0);
+    }).catch(function () {});
+
+  function countPersons(raw) {
+    try { return Object.keys(JSON.parse(raw).persons || {}).length; } catch (e) { return 0; }
+  }
+
+  // Repli localStorage si IndexedDB est indisponible (navigation privée
+  // stricte, WebView bridée) : même format qu'avant, mais on ne laisse
+  // jamais une sauvegarde faire échouer l'écriture principale — en cas de
+  // quota, on retire les plus anciennes jusqu'à ce que ça passe.
+  function pushLegacyBackup(entry) {
+    var list;
+    try { list = JSON.parse(localStorage.getItem(LEGACY_BACKUP_KEY)) || []; } catch (e) { list = []; }
+    list.unshift({ at: entry.at, data: entry.data, label: entry.label });
+    list = list.slice(0, BACKUP_MAX);
+    while (list.length) {
+      try { localStorage.setItem(LEGACY_BACKUP_KEY, JSON.stringify(list)); return; } catch (e) {
+        if (!isQuotaError(e)) return;
+        list.pop();
+      }
+    }
+    try { localStorage.removeItem(LEGACY_BACKUP_KEY); } catch (e) {}
+  }
+
+  function pushBackup(oldRaw, label) {
     try {
       if (!oldRaw) return;
-      var oldData = JSON.parse(oldRaw);
-      if (!oldData || !oldData.persons || !Object.keys(oldData.persons).length) return;
-      var list;
-      try { list = JSON.parse(localStorage.getItem(BACKUP_KEY)) || []; } catch (e) { list = []; }
-      list.unshift({ at: new Date().toISOString(), data: oldRaw });
-      if (list.length > BACKUP_MAX) list = list.slice(0, BACKUP_MAX);
-      localStorage.setItem(BACKUP_KEY, JSON.stringify(list));
+      var count = countPersons(oldRaw);
+      if (!count) return;
+      var entry = { at: new Date().toISOString(), data: oldRaw, count: count, label: label || '' };
+      lastBackupAt = Date.now();
+      idbAdd(entry).catch(function () { pushLegacyBackup(entry); });
     } catch (e) {
       console.error('Sauvegarde automatique impossible', e);
     }
   }
+
+  // Liste des sauvegardes, plus récente d'abord (asynchrone : IndexedDB).
   function listBackups() {
-    try { return JSON.parse(localStorage.getItem(BACKUP_KEY)) || []; } catch (e) { return []; }
+    return ready.then(idbAll).catch(function () {
+      try { return JSON.parse(localStorage.getItem(LEGACY_BACKUP_KEY)) || []; } catch (e) { return []; }
+    }).then(function (list) {
+      return list.map(function (b) {
+        return { at: b.at, count: b.count != null ? b.count : countPersons(b.data), label: b.label || '', data: b.data };
+      });
+    });
   }
-  // Renvoie l'état restauré (à assigner soi-même, puis Store.save) plutôt que
-  // de l'appliquer directement : la fonction reste pure, l'appelant décide
-  // du re-rendu et gère la confirmation utilisateur.
+  // Renvoie (promesse) l'état restauré, à assigner soi-même puis Store.save :
+  // la fonction reste pure, l'appelant décide du re-rendu et de la confirmation.
   function restoreBackup(index) {
-    var entry = listBackups()[index];
-    if (!entry) return null;
-    try { return JSON.parse(entry.data); } catch (e) { return null; }
+    return listBackups().then(function (list) {
+      var entry = list[index];
+      if (!entry) return null;
+      try { return JSON.parse(entry.data); } catch (e) { return null; }
+    });
   }
+
+  // Force une sauvegarde de l'état persisté avant la prochaine écriture
+  // (à appeler juste avant une opération lourde : suppression, fusion…).
+  function checkpoint(label) { forceBackupLabel = label || 'avant modification'; }
 
   var saveTimer = null;
   var pendingState = null;
   function writeNow(state) {
+    var oldRaw = null, newRaw;
     try {
-      var oldRaw = localStorage.getItem(KEY);
-      var newRaw = JSON.stringify(state);
-      if (oldRaw && oldRaw !== newRaw) pushBackup(oldRaw);
-      localStorage.setItem(KEY, newRaw);
+      oldRaw = localStorage.getItem(KEY);
+      newRaw = JSON.stringify(state);
     } catch (e) {
-      console.error('Sauvegarde impossible', e);
+      reportError('lecture', e);
+      return false;
+    }
+    if (oldRaw && oldRaw !== newRaw) {
+      if (forceBackupLabel || Date.now() - lastBackupAt >= BACKUP_INTERVAL_MS) {
+        pushBackup(oldRaw, forceBackupLabel);
+      }
+      forceBackupLabel = null;
+    }
+    try {
+      localStorage.setItem(KEY, newRaw);
+      return true;
+    } catch (e) {
+      if (isQuotaError(e)) {
+        // Dernier recours : les anciennes sauvegardes (format localStorage)
+        // prennent la place des données principales → on les libère.
+        try { localStorage.removeItem(LEGACY_BACKUP_KEY); localStorage.setItem(KEY, newRaw); return true; } catch (e2) {
+          reportError('quota', e2);
+          return false;
+        }
+      }
+      reportError('ecriture', e);
+      return false;
     }
   }
   function save(state) {
@@ -84,6 +243,7 @@
       writeNow(pendingState);
       pendingState = null;
     }, 150);
+    notifyChange();
   }
   // Écrit immédiatement une éventuelle sauvegarde en attente. Indispensable
   // avant fermeture/mise en arrière-plan : sur mobile/PWA la page peut être
@@ -93,13 +253,20 @@
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
     if (pendingState) { writeNow(pendingState); pendingState = null; }
   }
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && window.addEventListener) {
     window.addEventListener('pagehide', flush);
     window.addEventListener('beforeunload', flush);
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'hidden') flush();
     });
   }
+
+  // Numéro de révision des données (incrémenté à chaque save) : permet aux
+  // vues de mettre en cache des calculs coûteux (profondeur de l'arbre,
+  // suggestions) et de ne les refaire que si les données ont changé.
+  var revision = 0;
+  function notifyChange() { revision++; }
+  function getRevision() { return revision; }
 
   function newPerson(fields) {
     return Object.assign({
@@ -363,15 +530,27 @@
     return Object.keys(state.persons).map(function (id) { return state.persons[id]; });
   }
 
+  // Recherche insensible à la casse ET aux accents (« helene » trouve
+  // « Hélène »), sur le nom, les lieux (naissance et décès), les notes et
+  // les années (« 1889 » trouve les naissances/décès de 1889).
+  function searchText(p) {
+    return foldText([
+      fullName(p),
+      p.naissance && p.naissance.lieu, p.deces && p.deces.lieu,
+      p.naissance && p.naissance.date, p.deces && p.deces.date,
+      p.notes
+    ].filter(Boolean).join(' \n '));
+  }
   function searchPersons(state, query) {
-    var q = (query || '').trim().toLowerCase();
+    var terms = foldText(query).split(/\s+/).filter(Boolean);
     var list = allPersons(state);
-    if (!q) return list.sort(function (a, b) { return fullName(a).localeCompare(fullName(b)); });
-    return list.filter(function (p) {
-      return fullName(p).toLowerCase().indexOf(q) !== -1 ||
-        (p.naissance.lieu || '').toLowerCase().indexOf(q) !== -1 ||
-        (p.notes || '').toLowerCase().indexOf(q) !== -1;
-    }).sort(function (a, b) { return fullName(a).localeCompare(fullName(b)); });
+    if (terms.length) {
+      list = list.filter(function (p) {
+        var hay = searchText(p);
+        return terms.every(function (t) { return hay.indexOf(t) !== -1; });
+      });
+    }
+    return list.sort(function (a, b) { return fullName(a).localeCompare(fullName(b)); });
   }
 
   // --- Fusion de deux arbres (ex. deux exports GEDCOM de logiciels différents) ---
@@ -380,8 +559,10 @@
   // complète seulement les champs vides et ajoute les personnes/unions inconnues.
 
   function stripAccents(s) {
-    return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+    return (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   }
+  // Texte « replié » pour la recherche : minuscules, sans accents.
+  function foldText(s) { return stripAccents(s).toLowerCase().trim(); }
 
   function normalizeName(s) {
     return stripAccents(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -599,32 +780,51 @@
   // union) : c'est le signal le plus fort ET le plus actionnable — une fiche
   // vide ressemblant à une fiche complète est presque toujours un doublon
   // d'import, sans rien à perdre à la fusionner.
+  // Performance : prénoms normalisés et années calculés UNE fois par personne
+  // (et non à chaque paire), et filtres bon marché (sexe, années, écart de
+  // longueur) appliqués AVANT la distance de Levenshtein — les groupes d'un
+  // même nom de famille peuvent compter des centaines de personnes (≈ n²/2
+  // paires). Les critères sont des filtres indépendants : les réordonner ne
+  // change pas le résultat.
   function scanFuzzyDuplicates(state) {
     var persons = allPersons(state);
     var bySurname = {};
     persons.forEach(function (p) {
       var s = normalizeName(p.nom);
       if (!s) return;
-      (bySurname[s] = bySurname[s] || []).push(p);
+      var fn = normalizeName(p.prenom);
+      if (!fn || fn.length < 3) return; // vide ou trop court : trop de faux positifs
+      (bySurname[s] = bySurname[s] || []).push({
+        p: p, fn: fn,
+        sexe: (p.sexe && p.sexe !== '?') ? p.sexe : '',
+        by: yearOf(p.naissance && p.naissance.date),
+        dy: yearOf(p.deces && p.deces.date),
+        iso: !(p.parentIds || []).length && !(p.unionIds || []).length
+      });
     });
-    var isIsolated = function (p) { return !(p.parentIds || []).length && !(p.unionIds || []).length; };
     var out = [];
     Object.keys(bySurname).forEach(function (surname) {
       var group = bySurname[surname];
       if (group.length < 2) return;
       for (var i = 0; i < group.length; i++) {
+        var A = group[i];
         for (var j = i + 1; j < group.length; j++) {
-          var a = group[i], b = group[j];
-          var fa = normalizeName(a.prenom), fb = normalizeName(b.prenom);
-          if (!fa || !fb || fa === fb) continue; // vide, ou déjà couvert par le scan exact
-          if (Math.min(fa.length, fb.length) < 3) continue; // trop court, trop de faux positifs
-          if (a.sexe && a.sexe !== '?' && b.sexe && b.sexe !== '?' && a.sexe !== b.sexe) continue;
+          var B = group[j];
+          var fa = A.fn, fb = B.fn;
+          if (fa === fb) continue; // déjà couvert par le scan exact
+          if (A.sexe && B.sexe && A.sexe !== B.sexe) continue;
+          var ya = A.by, yb = B.by, da = A.dy, db = B.dy;
+          if (ya && yb && Math.abs(ya - yb) > 3) continue;
+          if (da && db && Math.abs(da - db) > 5) continue;
+          if (ya && db && +ya > +db) continue; // né(e) après le décès du candidat : générations différentes
+          if (yb && da && +yb > +da) continue;
 
-          var dist = levenshtein(fa, fb);
           var prefix = fa.indexOf(fb) === 0 || fb.indexOf(fa) === 0;
+          if (!prefix && Math.abs(fa.length - fb.length) > 2) continue; // distance forcément > 2
+          var dist = levenshtein(fa, fb);
           if (dist > 2 && !prefix) continue;
 
-          var isoA = isIsolated(a), isoB = isIsolated(b);
+          var isoA = A.iso, isoB = B.iso;
           // Aucune fiche vide des deux côtés : le signal le plus fort (une
           // fiche vide qui ressemble à une fiche complète) est absent, donc on
           // ne garde que les vraies fautes de frappe (distance 1) — un simple
@@ -632,13 +832,6 @@
           // membres distincts d'une même famille (ex. « Elise »/« Céline »,
           // ou « Marie »/« Marie-Françoise » qui sont souvent deux sœurs).
           if (!isoA && !isoB && dist > 1) continue;
-
-          var ya = yearOf(a.naissance && a.naissance.date), yb = yearOf(b.naissance && b.naissance.date);
-          if (ya && yb && Math.abs(ya - yb) > 3) continue;
-          var da = yearOf(a.deces && a.deces.date), db = yearOf(b.deces && b.deces.date);
-          if (da && db && Math.abs(da - db) > 5) continue;
-          if (ya && db && +ya > +db) continue; // né(e) après le décès du candidat : générations différentes
-          if (yb && da && +yb > +da) continue;
 
           var score = 0;
           if (dist <= 1) score += 3; else if (dist === 2) score += 1;
@@ -648,7 +841,7 @@
           if (score < 2) continue; // « faible » : trop peu fiable pour être proposé
 
           var confidence = score >= 6 ? 'forte' : score >= 4 ? 'moyenne-forte' : 'moyenne';
-          out.push({ a: a.id, b: b.id, score: score, confidence: confidence, isolated: isoA || isoB });
+          out.push({ a: A.p.id, b: B.p.id, score: score, confidence: confidence, isolated: isoA || isoB });
         }
       }
     });
@@ -819,6 +1012,10 @@
     load: load,
     save: save,
     flush: flush,
+    onError: onError,
+    checkpoint: checkpoint,
+    getRevision: getRevision,
+    foldText: foldText,
     listBackups: listBackups,
     restoreBackup: restoreBackup,
     addPerson: addPerson,

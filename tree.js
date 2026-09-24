@@ -89,6 +89,17 @@
     // Clic sur la pastille = recentrer l'arbre ici (dérouler cette branche)
     g.addEventListener('click', function () { if (opts.onSelect) opts.onSelect(id); });
 
+    // Accessibilité clavier / lecteur d'écran : chaque personne est
+    // focalisable (Tab), Entrée/Espace recentre, « i » ouvre la fiche.
+    g.setAttribute('tabindex', '0');
+    g.setAttribute('role', 'button');
+    g.setAttribute('aria-label', info.name + (info.years ? ', ' + info.years : '') +
+      (isRoot ? ' (personne affichée au centre)' : '') + '. Entrée : centrer ici. I : ouvrir la fiche.');
+    g.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (opts.onSelect) opts.onSelect(id); }
+      else if (e.key === 'i' || e.key === 'I') { e.preventDefault(); if (opts.onOpen) opts.onOpen(id); }
+    });
+
     // Bouton « i » : ouvrir la fiche détaillée sans recentrer
     var ib = svgEl('g', { class: 'tree-info-btn', transform: 'translate(' + (R * 0.72) + ',' + (-R * 0.72) + ')' });
     ib.appendChild(svgEl('circle', { r: 10 }));
@@ -349,10 +360,25 @@
     });
   }
 
+  // Les écouteurs (pointeurs, molette) sont posés UNE SEULE FOIS par <svg> :
+  // le <svg> est réutilisé d'un rendu à l'autre, et les rattacher à chaque
+  // rendu les accumulait (N navigations → N gestionnaires par geste, l'app
+  // ralentissait au fil de la session). Seuls le groupe affiché (viewport)
+  // et ses dimensions (box) changent à chaque rendu : voir attach().
   function attachPanZoom(svg, viewport, box) {
+    var ctl = svg.__panZoom;
+    if (!ctl) { ctl = createPanZoom(svg); svg.__panZoom = ctl; }
+    ctl.attach(viewport, box);
+    return ctl;
+  }
+
+  function createPanZoom(svg) {
     var state = { scale: 1, tx: 0, ty: 0, dragging: false, lastX: 0, lastY: 0 };
+    var viewport = null;
+    var box = { width: 1, height: 1 };
 
     function apply() {
+      if (!viewport) return;
       viewport.setAttribute('transform', 'translate(' + state.tx + ',' + state.ty + ') scale(' + state.scale + ')');
     }
 
@@ -455,8 +481,8 @@
       apply();
     }, { passive: false });
 
-    fit();
     return {
+      attach: function (vp, b) { viewport = vp; box = b; fit(); },
       zoomIn: function () { state.scale = Math.min(state.scale * 1.2, 3); apply(); },
       zoomOut: function () { state.scale = Math.max(state.scale * 0.8, 0.1); apply(); },
       reset: fit

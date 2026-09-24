@@ -1,0 +1,18 @@
+name: Tests
+
+# Vérifie chaque branche et chaque pull request (les workflows de build ne
+# tournent que sur main) : les tests n'ont besoin d'aucune dépendance.
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test

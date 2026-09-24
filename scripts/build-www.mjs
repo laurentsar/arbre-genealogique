@@ -19,6 +19,8 @@ const assets = [
   'fanchart.js',
   'wikitree.js',
   'insee.js',
+  'util.js',
+  'online.js',
   'backend.js',
   'sw.js',
   'manifest.webmanifest',
