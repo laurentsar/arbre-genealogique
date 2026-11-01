@@ -28,44 +28,65 @@
 <main id="views">
 
   <section id="view-tree" class="view active">
-    <div class="tree-toolbar">
-      <div class="tree-toolbar-row">
-        <button id="btnTreeBack" class="btn btn-ghost btn-sm" title="Revenir à la personne précédente" disabled>◀ Retour</button>
-        <button id="btnTreeHome" class="btn btn-ghost btn-sm" title="Revenir à la personne racine" disabled>🏠 Racine</button>
-        <button id="btnChangeRoot" class="btn btn-ghost btn-sm">Changer</button>
-        <button id="btnFanChart" class="btn btn-ghost btn-sm" title="Vue en éventail, pensée pour l'impression (ascendants uniquement)">🖨 Éventail</button>
+    <!-- PC (≥ 1100 px) : recherche à gauche, arbre au centre, fiche à droite.
+         Mobile : seul l'arbre est affiché, la fiche s'ouvre en fenêtre. -->
+    <aside id="treeSidebar" class="tree-sidebar" aria-label="Recherche rapide">
+      <div class="tree-sidebar-head">
+        <input id="quickSearch" type="search" placeholder="Rechercher… (Ctrl+K)" aria-label="Rechercher une personne et la centrer dans l'arbre" autocomplete="off">
       </div>
-      <div class="tree-toolbar-row">
+      <ul id="quickList" class="quick-list"></ul>
+      <p id="quickCount" class="quick-count muted"></p>
+    </aside>
+
+    <div class="tree-main">
+      <div class="tree-toolbar">
+        <button id="btnTreeBack" class="btn btn-ghost btn-sm btn-icon" title="Revenir à la personne précédente (Alt+←)" aria-label="Retour" disabled>◀</button>
+        <button id="btnTreeHome" class="btn btn-ghost btn-sm btn-icon" title="Revenir à la personne racine" aria-label="Revenir à la racine" disabled>🏠</button>
         <nav id="treeBreadcrumb" class="tree-breadcrumb" aria-label="Chemin de navigation"></nav>
-      </div>
-      <div class="tree-toolbar-row">
         <div class="segmented" id="modeSwitch" role="group" aria-label="Type d'arbre">
-          <button data-mode="ancestors" class="active">Ascendants</button>
-          <button data-mode="descendants">Descendants</button>
+          <button data-mode="ancestors" class="active" title="Ascendants (parents, grands-parents…)">Asc<span class="mob-hide">endants</span></button>
+          <button data-mode="descendants" title="Descendants (enfants, petits-enfants…)">Desc<span class="mob-hide">endants</span></button>
         </div>
-        <label class="gen-stepper">
-          Générations
-          <input id="genRange" type="range" min="1" max="7" value="4">
-          <span id="genValue">4</span>
-        </label>
+        <div class="gen-stepper" role="group" aria-label="Nombre de générations affichées">
+          <button id="btnGenMinus" class="btn btn-ghost btn-sm btn-icon" type="button" aria-label="Une génération de moins" title="Une génération de moins">−</button>
+          <span id="genValue" class="gen-value" aria-live="polite">4</span>
+          <button id="btnGenPlus" class="btn btn-ghost btn-sm btn-icon" type="button" aria-label="Une génération de plus" title="Une génération de plus">+</button>
+          <span class="gen-label">gén.</span>
+          <input id="genRange" type="range" min="1" max="7" value="4" hidden>
+        </div>
+        <details class="menu" id="treeMenu">
+          <summary class="btn btn-ghost btn-sm btn-icon" title="Plus d'actions" aria-label="Plus d'actions">⋯</summary>
+          <div class="menu-pop" role="menu">
+            <button id="btnChangeRoot" type="button" role="menuitem">🔎 Aller à une personne… <kbd>Ctrl K</kbd></button>
+            <button id="btnFanChart" type="button" role="menuitem" title="Vue en éventail, pensée pour l'impression (ascendants uniquement)">🖨 Éventail (impression)</button>
+            <button id="btnTreeHelp" type="button" role="menuitem">⌨ Raccourcis</button>
+          </div>
+        </details>
+      </div>
+      <div class="tree-canvas-wrap">
+        <svg id="treeSvg" class="tree-canvas" role="group" aria-label="Arbre généalogique : Tab pour parcourir les personnes, Entrée pour centrer, I pour ouvrir la fiche"></svg>
+        <div id="treeEmpty" class="tree-empty hidden">
+          <p>Aucune personne pour l'instant.</p>
+          <button id="btnEmptyAdd" class="btn btn-accent">Ajouter la première personne</button>
+        </div>
+        <div class="tree-zoom-controls">
+          <button id="btnZoomIn" class="btn btn-round" title="Zoom avant (+)" aria-label="Zoom avant">+</button>
+          <button id="btnZoomOut" class="btn btn-round" title="Zoom arrière (−)" aria-label="Zoom arrière">−</button>
+          <button id="btnZoomReset" class="btn btn-round" title="Ajuster à l'écran (0)" aria-label="Ajuster à l'écran"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+        <details class="tree-legend">
+          <summary>Légende</summary>
+          <span><i class="dot dot-union"></i>Union / conjoint</span>
+          <span><i class="dot dot-child"></i>Lien vers l'enfant</span>
+          <span><i class="dot dot-ghost"></i>À compléter (cliquer)</span>
+          <span class="legend-desktop">Clic : fiche · Double-clic : centrer</span>
+        </details>
       </div>
     </div>
-    <div class="tree-canvas-wrap">
-      <svg id="treeSvg" class="tree-canvas" role="group" aria-label="Arbre généalogique : Tab pour parcourir les personnes, Entrée pour centrer, I pour ouvrir la fiche"></svg>
-      <div id="treeEmpty" class="tree-empty hidden">
-        <p>Aucune personne pour l'instant.</p>
-        <button id="btnEmptyAdd" class="btn btn-accent">Ajouter la première personne</button>
-      </div>
-      <div class="tree-zoom-controls">
-        <button id="btnZoomIn" class="btn btn-round" title="Zoom avant" aria-label="Zoom avant">+</button>
-        <button id="btnZoomOut" class="btn btn-round" title="Zoom arrière" aria-label="Zoom arrière">−</button>
-        <button id="btnZoomReset" class="btn btn-round" title="Réinitialiser la vue" aria-label="Réinitialiser la vue">⤢</button>
-      </div>
-      <div class="tree-legend">
-        <span><i class="dot dot-union"></i>Union / conjoint</span>
-        <span><i class="dot dot-child"></i>Lien vers l'enfant</span>
-      </div>
-    </div>
+
+    <aside id="detailPane" class="detail-pane" aria-label="Fiche de la personne sélectionnée">
+      <div id="detailPaneBody" class="detail-pane-body"></div>
+    </aside>
   </section>
 
   <section id="view-list" class="view">
@@ -221,6 +242,21 @@
   <div class="dialog-actions">
     <button type="button" id="btnDetailClose" class="btn btn-ghost">Fermer</button>
   </div>
+</dialog>
+
+<dialog id="shortcutsDialog" class="app-dialog">
+  <h2>⌨ Raccourcis</h2>
+  <table class="shortcuts">
+    <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd> ou <kbd>/</kbd></td><td>Rechercher une personne</td></tr>
+    <tr><td>Clic</td><td>Afficher la fiche (panneau de droite)</td></tr>
+    <tr><td>Double-clic · <kbd>Entrée</kbd></td><td>Centrer l'arbre sur la personne</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>←</kbd></td><td>Personne précédente</td></tr>
+    <tr><td><kbd>A</kbd> / <kbd>D</kbd></td><td>Ascendants / Descendants</td></tr>
+    <tr><td><kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd></td><td>Zoom avant, arrière, ajuster</td></tr>
+    <tr><td><kbd>E</kbd></td><td>Modifier la personne sélectionnée</td></tr>
+    <tr><td><kbd>N</kbd></td><td>Nouvelle personne</td></tr>
+  </table>
+  <div class="dialog-actions"><button class="btn" type="button" id="btnShortcutsClose">Fermer</button></div>
 </dialog>
 
 <dialog id="pickerDialog" class="app-dialog">

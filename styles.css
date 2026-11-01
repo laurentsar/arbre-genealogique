@@ -131,34 +131,43 @@ button, input, select, textarea { font-family: inherit; }
 .btn-ghost { background: transparent; }
 .btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 .btn-sm { padding: 5px 10px; font-size: 0.82rem; }
-.btn-round { width: 38px; height: 38px; border-radius: 50%; padding: 0; font-size: 1.1rem; line-height: 1; }
+.btn-round { width: 38px; height: 38px; border-radius: 50%; padding: 0; font-size: 1.1rem; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
 .btn-file { display: inline-flex; align-items: center; }
 .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
 
 /* --- Arbre --- */
+.tree-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+/* Barre d'outils de l'arbre sur UNE ligne (retour, racine, fil d'Ariane,
+   asc./desc., générations, menu « ⋯ »). */
 .tree-toolbar {
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
   flex: 0 0 auto;
 }
-.tree-toolbar-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.btn-icon { min-width: 34px; height: 34px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; font-size: 1rem; }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn:disabled:hover { border-color: var(--border); }
+.tree-toolbar .btn-ghost { border-color: transparent; }
+.tree-toolbar .btn-ghost:hover { border-color: var(--border); background: var(--surface-2); }
+.tree-toolbar .btn-ghost:disabled:hover { border-color: transparent; background: transparent; }
 .tree-root-label { font-size: 0.9rem; color: var(--muted); }
 .tree-root-label strong { color: var(--text); }
 
 /* Fil d'Ariane de navigation : chaque étape cliquable ramène directement là. */
-.tree-breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; font-size: 0.85rem; min-height: 1.4em; }
-.tree-breadcrumb:empty { display: none; }
+.tree-breadcrumb { display: flex; align-items: center; flex-wrap: nowrap; overflow: hidden; gap: 2px; font-size: 0.9rem; min-height: 1.4em; flex: 1 1 120px; min-width: 0; }
+.tree-breadcrumb:empty { visibility: hidden; }
 .tree-breadcrumb .crumb {
   background: none; border: none; padding: 3px 4px; cursor: pointer;
-  color: var(--muted); font-size: inherit; border-radius: 5px; max-width: 34vw;
+  color: var(--muted); font-size: inherit; border-radius: 5px; max-width: 22ch; flex: 0 1 auto; min-width: 5ch;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .tree-breadcrumb .crumb:hover { background: var(--surface-2); color: var(--text); }
-.tree-breadcrumb .crumb.current { color: var(--accent-strong); font-weight: 700; cursor: default; }
+.tree-breadcrumb .crumb.current { color: var(--accent-strong); font-weight: 700; cursor: default; flex-shrink: 0; }
 .tree-breadcrumb .crumb.current:hover { background: none; }
 .tree-breadcrumb .crumb-sep { color: var(--border); }
 .tree-breadcrumb .crumb-more { color: var(--muted); padding: 3px 4px; }
@@ -167,8 +176,35 @@ button, input, select, textarea { font-family: inherit; }
 .segmented button { background: var(--surface-2); color: var(--muted); border: none; padding: 6px 12px; cursor: pointer; font-size: 0.85rem; }
 .segmented button.active { background: var(--accent); color: var(--on-accent); font-weight: 600; }
 
-.gen-stepper { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--muted); }
-.gen-stepper span { color: var(--text); min-width: 1em; text-align: center; }
+.gen-stepper { display: flex; align-items: center; gap: 2px; font-size: 0.85rem; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; padding: 0 4px 0 0; }
+.gen-stepper .btn-icon { height: 30px; min-width: 30px; }
+.gen-value { color: var(--text); font-weight: 700; min-width: 1.2em; text-align: center; }
+.gen-label { margin-left: 2px; }
+
+/* Menu « ⋯ » */
+.menu { position: relative; }
+.menu > summary { list-style: none; cursor: pointer; }
+.menu > summary::-webkit-details-marker { display: none; }
+.menu-pop {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
+  min-width: 250px; display: flex; flex-direction: column; padding: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 24px var(--shadow);
+}
+.menu-pop button {
+  white-space: nowrap;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: none; border: none; color: var(--text); text-align: left;
+  padding: 9px 10px; border-radius: 7px; font-size: 0.9rem; cursor: pointer;
+}
+.menu-pop button:hover, .menu-pop button:focus-visible { background: var(--surface-2); }
+kbd {
+  font-family: inherit; font-size: 0.75rem; color: var(--muted);
+  border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px;
+}
+.shortcuts { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+.shortcuts td { padding: 6px 4px; border-bottom: 1px solid var(--border); }
+.shortcuts td:first-child { white-space: nowrap; color: var(--muted); padding-right: 14px; }
 
 .tree-canvas-wrap { position: relative; flex: 1 1 auto; min-height: 0; background: radial-gradient(circle at 30% 20%, var(--canvas-a), var(--canvas-b)); }
 .tree-canvas { width: 100%; height: 100%; touch-action: none; cursor: grab; }
@@ -177,13 +213,19 @@ button, input, select, textarea { font-family: inherit; }
 .tree-zoom-controls { position: absolute; right: 14px; bottom: 14px; display: flex; flex-direction: column; gap: 8px; }
 
 .tree-legend {
-  position: absolute; left: 14px; bottom: 14px;
+  position: absolute; left: 12px; bottom: 12px;
   display: flex; flex-direction: column; gap: 4px;
   background: var(--overlay); border: 1px solid var(--border);
-  border-radius: 8px; padding: 8px 10px;
+  border-radius: 8px; padding: 5px 9px;
   font-size: 0.72rem; color: var(--muted);
-  pointer-events: none;
 }
+.tree-legend > summary { cursor: pointer; list-style: none; font-weight: 600; }
+.tree-legend > summary::-webkit-details-marker { display: none; }
+.tree-legend > summary::before { content: 'ⓘ '; }
+.tree-legend[open] > summary { margin-bottom: 4px; }
+.tree-legend > span { display: block; margin-top: 3px; }
+.tree-legend .dot-ghost { background: transparent; border: 1.5px dashed var(--accent); }
+.legend-desktop { display: none !important; }
 .tree-legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 .tree-legend .dot-union { background: var(--line-union); }
 .tree-legend .dot-child { background: var(--line-child); }
@@ -237,6 +279,24 @@ button, input, select, textarea { font-family: inherit; }
 .tree-edge { fill: none; stroke-width: 2; }
 .tree-edge-union { stroke: var(--line-union); }
 .tree-edge-child { stroke: var(--line-child); }
+.tree-edge-ghost { stroke: var(--muted); stroke-dasharray: 5 5; opacity: 0.7; }
+
+/* Sélection (PC) : halo autour de la personne dont la fiche est affichée. */
+.tree-select-ring { fill: none; stroke: none; }
+.tree-node.is-selected .tree-select-ring { stroke: var(--accent-strong); stroke-width: 3; stroke-dasharray: 6 4; fill: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* Emplacements à compléter (« + Père », « + Mère », « + Enfant »). */
+.tree-ghost { cursor: pointer; }
+.tree-ghost-circle { fill: transparent; stroke: var(--muted); stroke-width: 2; stroke-dasharray: 6 5; transition: stroke 0.15s ease, fill 0.15s ease; }
+.tree-ghost-plus { fill: var(--muted); font-size: 26px; font-weight: 700; }
+.tree-ghost-label { fill: var(--muted); font-size: 14px; font-weight: 600; }
+.tree-ghost:hover .tree-ghost-circle, .tree-ghost:focus-visible .tree-ghost-circle { stroke: var(--accent-strong); fill: color-mix(in srgb, var(--accent) 15%, transparent); }
+.tree-ghost:hover .tree-ghost-plus, .tree-ghost:hover .tree-ghost-label { fill: var(--accent-strong); }
+.tree-ghost:focus { outline: none; }
+
+/* Colonne de recherche (gauche) et panneau fiche (droite) : PC seulement. */
+.tree-sidebar, .detail-pane { display: none; }
+.nav-lbl { display: none; }
 
 /* --- Liste des personnes --- */
 .list-toolbar { padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--surface); flex: 0 0 auto; }
@@ -576,6 +636,81 @@ dialog h2 { margin-top: 0; font-size: 1.05rem; }
   border: 1px solid var(--accent); border-radius: 12px;
   padding: 8px 10px 8px 14px; box-shadow: 0 6px 20px var(--shadow);
   font-size: 0.9rem; max-width: calc(100vw - 24px);
+}
+
+/* ===== Grand écran (PC) ===== */
+@media (min-width: 700px) {
+  .nav-lbl { display: inline; margin-left: 5px; font-size: 0.78rem; }
+  .person-nav-btn { width: auto !important; padding: 0 10px !important; border-radius: 16px !important; }
+}
+@media (max-width: 699px) {
+  /* Mobile : le fil d'Ariane passe sous les boutons. */
+  .tree-breadcrumb { order: 10; flex-basis: 100%; }
+  .gen-label, .mob-hide { display: none; }
+  .tree-toolbar { gap: 6px; padding: 6px 8px; }
+  .segmented button { padding: 6px 10px; }
+}
+@media (min-width: 900px) {
+  /* Liste des personnes : largeur de lecture confortable sur grand écran. */
+  #view-list > .list-toolbar { display: flex; gap: 10px; align-items: center; }
+  #view-list > .list-toolbar input { flex: 1 1 auto; }
+  #view-list > .list-toolbar, #view-list > .alpha-strip, #view-list > .person-list, #view-list > .empty-hint {
+    width: 100%; max-width: 980px; margin-left: auto; margin-right: auto;
+  }
+}
+@media (min-width: 1100px) {
+  /* Navigation principale dans la barre du haut plutôt qu'en bas. */
+  .topbar { min-height: 56px; padding-top: 8px; padding-bottom: 8px; }
+  .bottombar {
+    position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+    height: 56px; border-top: none; background: transparent; padding: 0; gap: 4px; z-index: 20;
+  }
+  .bottombar button {
+    flex: 0 0 auto; flex-direction: row; gap: 6px; padding: 8px 16px; font-size: 1rem;
+    border-radius: 8px; margin: 9px 0;
+  }
+  .bottombar button span { font-size: 0.9rem; }
+  .bottombar button:hover { background: var(--surface-2); color: var(--text); }
+  .bottombar button.active { background: var(--surface-2); }
+  #views { order: 1; }
+
+  #view-tree.view.active { flex-direction: row; overflow: hidden; }
+  .legend-desktop { display: block !important; }
+
+  .tree-sidebar {
+    display: flex; flex-direction: column; flex: 0 0 280px; min-height: 0;
+    border-right: 1px solid var(--border); background: var(--surface);
+  }
+  .tree-sidebar-head { padding: 10px; border-bottom: 1px solid var(--border); }
+  .tree-sidebar-head input { width: 100%; }
+  .quick-list { list-style: none; margin: 0; padding: 6px; overflow: auto; flex: 1 1 auto; }
+  .quick-list li {
+    display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px;
+    cursor: pointer; border: 1px solid transparent;
+  }
+  .quick-list li .avatar { width: 30px; height: 30px; font-size: 0.78rem; }
+  .quick-list li .avatar-gender { width: 12px; height: 12px; font-size: 8px; }
+  .quick-list li:hover, .quick-list li:focus { background: var(--surface-2); outline: none; }
+  .quick-list li:focus-visible { border-color: var(--accent); }
+  .quick-list li.is-selected { border-color: var(--accent); }
+  .quick-list li.is-center { background: var(--surface-2); }
+  .quick-list li.is-center .quick-name { color: var(--accent-strong); }
+  .quick-main { display: flex; flex-direction: column; min-width: 0; }
+  .quick-name { font-size: 0.88rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .quick-sub { font-size: 0.75rem; color: var(--muted); }
+  .quick-count { font-size: 0.75rem; padding: 6px 12px 10px; margin: 0; border-top: 1px solid var(--border); }
+
+  .detail-pane {
+    display: flex; flex-direction: column; flex: 0 0 400px; min-height: 0;
+    border-left: 1px solid var(--border); background: var(--surface);
+  }
+  .detail-pane-body { overflow: auto; padding: 18px 20px; flex: 1 1 auto; }
+  .detail-pane .detail-header .avatar { width: 60px; height: 60px; font-size: 1.35rem; }
+  .detail-pane .detail-name { font-size: 1.2rem; }
+}
+@media (min-width: 1500px) {
+  .tree-sidebar { flex-basis: 310px; }
+  .detail-pane { flex-basis: 440px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

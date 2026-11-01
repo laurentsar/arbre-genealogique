@@ -6,7 +6,7 @@
  * version — Recharger » et n'active la nouvelle version qu'à la demande
  * (message SKIP_WAITING), pour ne jamais changer le code sous les pieds
  * d'une page ouverte. */
-const CACHE = 'genealogie-1.6.0';
+const CACHE = 'genealogie-1.7.0';
 // Doit rester aligné sur la liste des <script> d'index.html et sur les
 // assets de scripts/build-www.mjs (vérifié par tests/shell.test.mjs).
 const SHELL = [

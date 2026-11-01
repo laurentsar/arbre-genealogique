@@ -414,6 +414,7 @@
     // et statut de synchro à jour) — le scan lui-même est mis en cache tant
     // que les données n'ont pas changé (voir renderSuggestions).
     if (dirty[name] || name === 'settings') renderView(name);
+    if (name === 'tree') syncPane();
   }
 
   // Profondeur RÉELLE de générations disponibles (ascendants ou descendants
@@ -465,26 +466,178 @@
     var cr = currentRoot();
 
     var genRangeEl = $('#genRange');
+    var shownGen = maxGen;
     if (genRangeEl) {
-      var realDepth = Math.min(MAX_GEN, Math.max(1, realGenDepth(cr, treeMode)));
+      // +1 : une génération de plus que les données, pour afficher les
+      // emplacements « + Père / + Mère / + Enfant » à compléter.
+      var realDepth = Math.min(MAX_GEN, Math.max(1, realGenDepth(cr, treeMode) + 1));
       genRangeEl.max = realDepth;
-      var shownGen = Math.min(maxGen, realDepth);
+      shownGen = Math.min(maxGen, realDepth);
       genRangeEl.value = shownGen;
       var genValueEl = $('#genValue');
       if (genValueEl) genValueEl.textContent = shownGen;
+      $('#btnGenMinus').disabled = shownGen <= 1;
+      $('#btnGenPlus').disabled = shownGen >= realDepth;
     }
+
+    // Même personne au centre, même mode, mêmes générations (ex. après une
+    // modification ou un ajout) : on garde le zoom et la position.
+    var viewKey = cr + '|' + treeMode + '|' + shownGen;
+    var keepView = viewKey === lastViewKey;
+    lastViewKey = viewKey;
 
     // Navigation au clavier : si le focus était dans l'arbre (nœud activé
     // par Entrée), on le replace sur la personne désormais au centre.
     var hadFocus = treeSvg.contains(document.activeElement);
-    panZoomCtl = Tree.render(treeSvg, state, { rootId: cr, mode: treeMode, maxGen: Math.min(maxGen, MAX_GEN), onSelect: focusPerson, onOpen: openDetail });
+    var desk = desktopMQ.matches;
+    if (desk && (!selectedId || !state.persons[selectedId])) selectedId = cr;
+    panZoomCtl = Tree.render(treeSvg, state, {
+      rootId: cr, mode: treeMode, maxGen: Math.min(shownGen, MAX_GEN),
+      // PC : clic = fiche dans le panneau, double-clic = centrer.
+      // Mobile : clic = centrer (le bouton « i » ouvre la fiche).
+      onSelect: desk ? selectPerson : focusPerson,
+      onActivate: desk ? navigateTo : null,
+      onOpen: openDetail,
+      onAdd: addFromTree,
+      ghostFor: cr,
+      selectedId: desk ? selectedId : null,
+      keepView: keepView
+    });
     if (hadFocus) {
       var rootNode = treeSvg.querySelector('.tree-node.is-root');
       if (rootNode) rootNode.focus();
     }
     renderBreadcrumb();
     updateNav();
+    syncPane();
+    renderQuickList();
   }
+  var lastViewKey = null;
+
+  // --- Mise en page PC (≥ 1100 px) : recherche | arbre | fiche ------------
+
+  var desktopMQ = window.matchMedia('(min-width: 1100px)');
+  var selectedId = null;
+
+  // La fiche s'affiche dans le panneau de droite quand on est sur l'arbre
+  // en grand écran ; sinon (mobile, ou depuis la liste) en fenêtre.
+  function paneMode() { return desktopMQ.matches && currentView === 'tree'; }
+
+  // Un seul bloc #detailContent (et ses écouteurs délégués), déplacé entre
+  // le panneau et la fenêtre selon le contexte.
+  function mountDetail(inPane) {
+    if (inPane) {
+      var body = $('#detailPaneBody');
+      if (detailContent.parentNode !== body) body.appendChild(detailContent);
+    } else if (detailContent.parentNode !== detailDialog) {
+      detailDialog.insertBefore(detailContent, detailDialog.querySelector('.dialog-actions'));
+    }
+  }
+
+  function syncPane() {
+    if (!paneMode() || detailDialog.open) return;
+    mountDetail(true);
+    if (!selectedId || !state.persons[selectedId]) selectedId = currentRoot();
+    if (selectedId) renderDetail(selectedId);
+    else detailContent.innerHTML = '<p class="muted">Sélectionnez une personne.</p>';
+  }
+
+  // Sélection (PC) : surligne la personne et affiche sa fiche, sans
+  // déplacer ni redessiner l'arbre.
+  function selectPerson(id) {
+    if (!state.persons[id]) return;
+    selectedId = id;
+    if (paneMode()) {
+      if (detailDialog.open) detailDialog.close();
+      mountDetail(true);
+      renderDetail(id);
+      Tree.markSelected(treeSvg, id);
+      markQuickList();
+    } else {
+      openDetail(id);
+    }
+  }
+
+  // Emplacement « + » cliqué dans l'arbre.
+  function addFromTree(role, ownerId, sexe) {
+    if (!state.persons[ownerId]) return;
+    selectedId = ownerId;
+    if (role === 'child') addChildFlow(ownerId);
+    else addParentFlow(ownerId, sexe);
+  }
+
+  // Recherche rapide (colonne de gauche, PC) : clic = centrer l'arbre.
+  var quickSearch = $('#quickSearch');
+  var quickList = $('#quickList');
+  var QUICK_MAX = 150;
+  function personYears(p) {
+    var b = p.naissance ? Tree.yearOf(p.naissance.date) : '';
+    var d = p.deces ? Tree.yearOf(p.deces.date) : '';
+    if (!b && !d) return p.decede ? '✝' : '';
+    return (b || '?') + (d ? ' – ' + d : (p.decede ? ' – ✝' : ''));
+  }
+  function renderQuickList() {
+    if (!desktopMQ.matches || !quickList) return;
+    var res = Store.searchPersons(state, quickSearch.value).sort(function (a, b) {
+      var c = (a.nom || a.prenom || '').localeCompare(b.nom || b.prenom || '', 'fr', { sensitivity: 'base' });
+      return c !== 0 ? c : Store.fullName(a).localeCompare(Store.fullName(b), 'fr', { sensitivity: 'base' });
+    });
+    var shown = res.slice(0, QUICK_MAX);
+    quickList.innerHTML = shown.map(function (p) {
+      return '<li data-id="' + escapeHtml(p.id) + '" tabindex="-1">' + avatarHTML(p) +
+        '<span class="quick-main"><span class="quick-name">' + escapeHtml(Store.fullName(p)) + '</span>' +
+        '<span class="quick-sub">' + escapeHtml(personYears(p)) + '</span></span></li>';
+    }).join('');
+    var cnt = $('#quickCount');
+    cnt.textContent = !res.length ? 'Aucun résultat.' :
+      (res.length > QUICK_MAX ? QUICK_MAX + ' premiers sur ' + res.length + ' — affinez la recherche' : res.length + ' personne(s)');
+    markQuickList();
+  }
+  function markQuickList() {
+    if (!quickList) return;
+    var cr = currentRoot();
+    $all('#quickList li').forEach(function (li) {
+      li.classList.toggle('is-center', li.dataset.id === cr);
+      li.classList.toggle('is-selected', li.dataset.id === selectedId);
+    });
+  }
+  function quickGo(id) {
+    if (!state.persons[id]) return;
+    selectedId = id;
+    if (currentRoot() === id) { selectPerson(id); return; }
+    navigateTo(id);
+  }
+  quickSearch.addEventListener('input', U.debounce(renderQuickList, 120));
+  quickSearch.addEventListener('keydown', function (e) {
+    // Liste recalculée tout de suite (la saisie est différée de 120 ms) :
+    // sinon une frappe rapide suivie d'Entrée ouvrait l'ancien résultat.
+    if (e.key === 'Enter' || e.key === 'ArrowDown') renderQuickList();
+    var first = quickList.querySelector('li');
+    if (e.key === 'ArrowDown' && first) { e.preventDefault(); first.focus(); }
+    else if (e.key === 'Enter' && first) { e.preventDefault(); quickGo(first.dataset.id); }
+    else if (e.key === 'Escape') { quickSearch.value = ''; renderQuickList(); quickSearch.blur(); }
+  });
+  quickList.addEventListener('click', function (e) {
+    var li = e.target.closest('li[data-id]');
+    if (li) quickGo(li.dataset.id);
+  });
+  quickList.addEventListener('keydown', function (e) {
+    var li = e.target.closest('li[data-id]');
+    if (!li) return;
+    if (e.key === 'ArrowDown' && li.nextElementSibling) { e.preventDefault(); li.nextElementSibling.focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); (li.previousElementSibling || quickSearch).focus(); }
+    else if (e.key === 'Enter') { e.preventDefault(); quickGo(li.dataset.id); }
+    else if (e.key === 'Escape') { quickSearch.focus(); }
+  });
+
+  function onLayoutChange() {
+    lastViewKey = null;
+    if (!desktopMQ.matches) mountDetail(false);
+    dirty.tree = true;
+    if (isActive('tree')) renderTree();
+  }
+  if (desktopMQ.addEventListener) desktopMQ.addEventListener('change', onLayoutChange);
+  else if (desktopMQ.addListener) desktopMQ.addListener(onLayoutChange);
 
   // --- Vue en éventail (ascendants, pensée pour l'impression) ------------
 
@@ -528,7 +681,7 @@
     var trail = rootHistory.concat([currentRoot()]);
     // Chemin long : on n'affiche que le point de départ, « … » et les
     // dernières étapes (sinon le fil occupait plusieurs lignes d'écran).
-    var CRUMBS_TAIL = 3;
+    var CRUMBS_TAIL = 2;
     var hiddenFrom = trail.length > CRUMBS_TAIL + 2 ? 1 : -1;
     var hiddenTo = trail.length - CRUMBS_TAIL;
     nav.innerHTML = trail.map(function (id, i) {
@@ -578,6 +731,7 @@
     var cur = currentRoot();
     if (cur && cur !== id) rootHistory.push(cur);
     viewRoot = id;
+    selectedId = id;
     updateNav();
     renderTree();
   }
@@ -589,7 +743,7 @@
       if (state.persons[prev]) break;
       prev = null;
     }
-    if (prev) { viewRoot = prev; updateNav(); renderTree(); }
+    if (prev) { viewRoot = prev; selectedId = prev; updateNav(); renderTree(); }
   }
 
   // Saute directement à une étape du fil d'Ariane (index dans
@@ -599,6 +753,7 @@
     if (idx < 0 || idx >= trail.length - 1 || !state.persons[trail[idx]]) return;
     rootHistory = trail.slice(0, idx);
     viewRoot = trail[idx];
+    selectedId = viewRoot;
     updateNav();
     renderTree();
   }
@@ -609,6 +764,7 @@
     var cur = currentRoot();
     if (cur !== state.rootId) rootHistory.push(cur);
     viewRoot = state.rootId;
+    selectedId = viewRoot;
     updateNav();
     renderTree();
   }
@@ -702,9 +858,9 @@
       html += '<li data-id="' + escapeHtml(p.id) + '" tabindex="0">' + avatarHTML(p) +
         '<div class="person-line-main"><div class="person-line-name">' + name + '</div>' +
         '<div class="person-line-sub">' + escapeHtml(subLine(p)) + '</div></div>' +
-        '<button class="person-nav-btn" type="button" data-nav="wikitree" title="Rechercher cette personne en ligne (WikiTree)" aria-label="Rechercher ' + name + ' sur WikiTree">🔍</button>' +
-        '<button class="person-nav-btn" type="button" data-nav="geneanet" title="Chercher sur Geneanet" aria-label="Chercher ' + name + ' sur Geneanet">🌐</button>' +
-        '<button class="person-nav-btn" type="button" data-nav="tree" title="Voir dans l’arbre" aria-label="Voir ' + name + ' dans l’arbre">🌳</button>' +
+        '<button class="person-nav-btn" type="button" data-nav="wikitree" title="Rechercher cette personne en ligne (WikiTree)" aria-label="Rechercher ' + name + ' sur WikiTree">🔍<span class="nav-lbl">WikiTree</span></button>' +
+        '<button class="person-nav-btn" type="button" data-nav="geneanet" title="Chercher sur Geneanet" aria-label="Chercher ' + name + ' sur Geneanet">🌐<span class="nav-lbl">Geneanet</span></button>' +
+        '<button class="person-nav-btn" type="button" data-nav="tree" title="Voir dans l’arbre" aria-label="Voir ' + name + ' dans l’arbre">🌳<span class="nav-lbl">Arbre</span></button>' +
         '</li>';
     }
     if (results.length > shown) {
@@ -1055,6 +1211,12 @@
           : Store.allPersons(state);
         var excl = opts.excludeIds || [];
         var list = base.filter(function (p) { return excl.indexOf(p.id) === -1; });
+        // « Choisir le père / la mère » : on écarte les personnes du sexe
+        // opposé (sexe inconnu « ? » toujours proposé).
+        if (opts.filterSexe === 'H' || opts.filterSexe === 'F') {
+          var other = opts.filterSexe === 'H' ? 'F' : 'H';
+          list = list.filter(function (p) { return p.sexe !== other; });
+        }
         // Insensible aux accents et à l'ordre des mots (« helene dupont »
         // trouve « Hélène Dupont »).
         var terms = Store.foldText(q).split(/\s+/).filter(Boolean);
@@ -1221,10 +1383,21 @@
   }
 
   function openDetail(personId) {
+    if (paneMode()) { selectPerson(personId); return; }
+    mountDetail(false);
     renderDetail(personId);
-    detailDialog.showModal();
+    if (!detailDialog.open) {
+      detailDialog.showModal();
+      // Focus sur « Fermer » plutôt que sur le 1er bouton de la fiche (le
+      // « × Détacher » du 1er parent : un Entrée réflexe le détachait).
+      var closeBtn = $('#btnDetailClose');
+      if (closeBtn) closeBtn.focus();
+    }
   }
-  function closeDetail() { detailDialog.close(); }
+  function closeDetail() { if (detailDialog.open) detailDialog.close(); }
+  // Fenêtre refermée alors qu'on est en grand écran sur l'arbre : la fiche
+  // retourne dans le panneau.
+  detailDialog.addEventListener('close', function () { if (paneMode()) syncPane(); });
 
   // Tous les descendants d'une personne (pour interdire de les choisir comme
   // parent : ça créerait une boucle « X est son propre ancêtre »).
@@ -1243,7 +1416,7 @@
     if ((p.parentIds || []).length >= 2) { alert('Cette personne a déjà deux parents enregistrés.'); return; }
     var exclude = [personId].concat(descendantIds(personId));
     var title = sexe === 'H' ? 'Choisir le père' : sexe === 'F' ? 'Choisir la mère' : 'Choisir le parent';
-    pickPerson({ title: title, excludeIds: exclude, newSexe: sexe }).then(function (res) {
+    pickPerson({ title: title, excludeIds: exclude, newSexe: sexe, filterSexe: sexe }).then(function (res) {
       if (!res) return;
       var slot = (p.parentIds || []).length;
       Store.setParent(state, personId, res.id, slot);
@@ -1377,7 +1550,11 @@
     var rmBtn = e.target.closest('[data-unlink]');
     if (rmBtn) { unlinkRelation(rmBtn.dataset.unlink, detailContent.dataset.personId, rmBtn.dataset.id); return; }
     var openBtn = e.target.closest('[data-open]');
-    if (openBtn) { renderDetail(openBtn.dataset.open); return; }
+    if (openBtn) {
+      if (paneMode()) selectPerson(openBtn.dataset.open);
+      else renderDetail(openBtn.dataset.open);
+      return;
+    }
     var actBtn = e.target.closest('[data-act]');
     if (actBtn) handleDetailAction(actBtn.dataset.act, detailContent.dataset.personId, actBtn.dataset.sexe || null);
   });
@@ -1414,11 +1591,71 @@
     renderTree();
   });
 
-  $('#btnChangeRoot').addEventListener('click', function () {
+  function stepGen(delta) {
+    var r = $('#genRange');
+    var v = Math.min(+r.max, Math.max(1, +r.value + delta));
+    if (v === +r.value) return;
+    r.value = v;
+    r.dispatchEvent(new Event('input'));
+  }
+  $('#btnGenMinus').addEventListener('click', function () { stepGen(-1); });
+  $('#btnGenPlus').addEventListener('click', function () { stepGen(1); });
+
+  // « Aller à… » : PC = recherche de la colonne de gauche ; mobile = sélecteur.
+  function openGoTo() {
+    if (desktopMQ.matches) {
+      if (!isActive('tree')) switchView('tree');
+      quickSearch.focus();
+      quickSearch.select();
+      return;
+    }
     pickPerson({ title: 'Aller à…', allowNew: false }).then(function (res) {
       if (!res) return;
+      if (!isActive('tree')) switchView('tree');
       navigateTo(res.id);
     });
+  }
+  $('#btnChangeRoot').addEventListener('click', openGoTo);
+
+  // Menu « ⋯ » : se referme après un choix ou un clic ailleurs.
+  var treeMenu = $('#treeMenu');
+  treeMenu.addEventListener('click', function (e) {
+    if (e.target.closest('.menu-pop button')) treeMenu.removeAttribute('open');
+  });
+  document.addEventListener('click', function (e) {
+    if (treeMenu.open && !treeMenu.contains(e.target)) treeMenu.removeAttribute('open');
+  });
+  $('#btnTreeHelp').addEventListener('click', function () { $('#shortcutsDialog').showModal(); });
+  $('#btnShortcutsClose').addEventListener('click', function () { $('#shortcutsDialog').close(); });
+
+  // Raccourcis clavier (ignorés pendant une saisie ou une fenêtre ouverte).
+  document.addEventListener('keydown', function (e) {
+    var t = e.target;
+    var typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+    var modalOpen = !!document.querySelector('dialog[open]');
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+      if (modalOpen) return;
+      e.preventDefault(); openGoTo(); return;
+    }
+    if (typing || modalOpen || e.ctrlKey || e.metaKey) return;
+    if (e.altKey) {
+      if (e.key === 'ArrowLeft' && isActive('tree')) { e.preventDefault(); goBackRoot(); }
+      return;
+    }
+    var onTree = isActive('tree');
+    switch (e.key) {
+      case '/': e.preventDefault(); openGoTo(); break;
+      case '?': $('#shortcutsDialog').showModal(); break;
+      case 'n': case 'N': e.preventDefault(); addPersonFlow(); break;
+      case 'a': case 'A': if (onTree) $('#modeSwitch [data-mode="ancestors"]').click(); break;
+      case 'd': case 'D': if (onTree) $('#modeSwitch [data-mode="descendants"]').click(); break;
+      case '+': case '=': if (onTree && panZoomCtl) panZoomCtl.zoomIn(); break;
+      case '-': if (onTree && panZoomCtl) panZoomCtl.zoomOut(); break;
+      case '0': if (onTree && panZoomCtl) panZoomCtl.reset(); break;
+      case 'e': case 'E':
+        if (onTree && paneMode() && selectedId && state.persons[selectedId]) { e.preventDefault(); handleDetailAction('edit', selectedId); }
+        break;
+    }
   });
 
   var backBtn = $('#btnTreeBack');
@@ -1636,7 +1873,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.6.0';
+  var APP_VERSION = '1.7.0';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

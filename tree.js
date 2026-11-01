@@ -25,10 +25,19 @@
     return (a + b).toUpperCase() || '?';
   }
 
+  // Année d'une date quel que soit son format (ISO « 1985-04-12 », saisie
+  // « 12/04/1985 », GEDCOM « ABT 1850 », « vers 1850 ») : la 1re suite de
+  // 4 chiffres. `slice(0, 4)` affichait « 12/0 » pour une date JJ/MM/AAAA.
+  function yearOf(date) {
+    var m = /(\d{4})/.exec(String(date || ''));
+    return m ? m[1] : '';
+  }
+
   function label(p) {
     var name = Store.fullName(p);
-    var b = p.naissance && p.naissance.date ? p.naissance.date.slice(0, 4) : '';
-    var d = p.decede || (p.deces && p.deces.date) ? (p.deces && p.deces.date ? p.deces.date.slice(0, 4) : '✝') : '';
+    var b = p.naissance ? yearOf(p.naissance.date) : '';
+    var dy = p.deces ? yearOf(p.deces.date) : '';
+    var d = (p.decede || dy) ? (dy || '✝') : '';
     var years = (b || d) ? (b + (d ? ' – ' + d : (p.decede ? ' – ✝' : ''))) : '';
     // Âge quand calculable (voir Store.computeAge) : ajouté entre
     // parenthèses à la suite des années, sans rien changer si indisponible.
@@ -63,7 +72,10 @@
     if (isRoot) cls += ' is-root';
     if (isSpouse) cls += ' is-spouse';
     if (hasHidden) cls += ' has-hidden';
-    var g = svgEl('g', { class: cls, transform: 'translate(' + cx + ',' + cy + ')' });
+    if (opts.selectedId === id) cls += ' is-selected';
+    var g = svgEl('g', { class: cls, transform: 'translate(' + cx + ',' + cy + ')', 'data-id': id });
+    // Halo de sélection (visible seulement avec .is-selected, voir CSS)
+    g.appendChild(svgEl('circle', { class: 'tree-select-ring', r: R + 7 }));
 
     // Pastille + initiales
     g.appendChild(svgEl('circle', { class: 'tree-avatar', r: R }));
@@ -86,17 +98,23 @@
       g.appendChild(yearsEl);
     }
 
-    // Clic sur la pastille = recentrer l'arbre ici (dérouler cette branche)
+    // Clic = onSelect (mobile : recentrer ; PC : sélectionner et afficher la
+    // fiche dans le panneau) ; double-clic = onActivate (PC : recentrer ici).
     g.addEventListener('click', function () { if (opts.onSelect) opts.onSelect(id); });
+    g.addEventListener('dblclick', function (e) {
+      e.preventDefault();
+      if (opts.onActivate) opts.onActivate(id);
+    });
 
     // Accessibilité clavier / lecteur d'écran : chaque personne est
-    // focalisable (Tab), Entrée/Espace recentre, « i » ouvre la fiche.
+    // focalisable (Tab), Entrée recentre, Espace sélectionne, « i » ouvre la fiche.
     g.setAttribute('tabindex', '0');
     g.setAttribute('role', 'button');
     g.setAttribute('aria-label', info.name + (info.years ? ', ' + info.years : '') +
       (isRoot ? ' (personne affichée au centre)' : '') + '. Entrée : centrer ici. I : ouvrir la fiche.');
     g.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (opts.onSelect) opts.onSelect(id); }
+      if (e.key === 'Enter') { e.preventDefault(); (opts.onActivate || opts.onSelect)(id); }
+      else if (e.key === ' ') { e.preventDefault(); if (opts.onSelect) opts.onSelect(id); }
       else if (e.key === 'i' || e.key === 'I') { e.preventDefault(); if (opts.onOpen) opts.onOpen(id); }
     });
 
@@ -128,15 +146,40 @@
       var eg = svgEl('text', { class: 'tree-expand-glyph', 'text-anchor': 'middle', dy: '0.35em' });
       eg.textContent = '+';
       eb.appendChild(eg);
-      eb.addEventListener('click', function (e) { e.stopPropagation(); if (opts.onSelect) opts.onSelect(id); });
+      eb.addEventListener('click', function (e) { e.stopPropagation(); (opts.onActivate || opts.onSelect)(id); });
       g.appendChild(eb);
     }
     group.appendChild(g);
   }
 
+  // Emplacement vide « + Père / + Mère / + Enfant » : pastille en pointillés
+  // à la place d'un parent ou d'un enfant manquant de la personne au centre.
+  // Clic = choisir une personne existante ou en créer une (opts.onAdd).
+  function drawGhost(group, n, opts) {
+    var text = n.role === 'child' ? 'Enfant' : (n.sexe === 'H' ? 'Père' : 'Mère');
+    var g = svgEl('g', { class: 'tree-ghost', transform: 'translate(' + n.cx + ',' + n.cy + ')' });
+    g.appendChild(svgEl('circle', { class: 'tree-ghost-circle', r: R * 0.8 }));
+    var plus = svgEl('text', { class: 'tree-ghost-plus', 'text-anchor': 'middle', dy: '0.35em' });
+    plus.textContent = '+';
+    g.appendChild(plus);
+    var lbl = svgEl('text', { class: 'tree-ghost-label', 'text-anchor': 'middle', y: R * 0.8 + 22 });
+    lbl.textContent = 'Ajouter ' + (n.role === 'child' ? 'un enfant' : (n.sexe === 'H' ? 'le père' : 'la mère'));
+    g.appendChild(lbl);
+    g.setAttribute('tabindex', '0');
+    g.setAttribute('role', 'button');
+    g.setAttribute('aria-label', '+ ' + text);
+    function fire() { if (opts.onAdd) opts.onAdd(n.role, n.ownerId, n.sexe || null); }
+    g.addEventListener('click', function (e) { e.stopPropagation(); fire(); });
+    g.addEventListener('dblclick', function (e) { e.stopPropagation(); });
+    g.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fire(); }
+    });
+    group.appendChild(g);
+  }
+
   // --- Ascendants (numérotation d'Ahnentafel : 1=racine, 2n=père, 2n+1=mère) ---
 
-  function buildAncestors(state, rootId, maxGen) {
+  function buildAncestors(state, rootId, maxGen, ghostFor) {
     // Layout COMPACT : au lieu de réserver 2^génération lignes (grille
     // d'Ahnentafel pleine, vide à 99 % dès qu'il manque des ancêtres, ce qui
     // forçait un dézoom illisible), on empile seulement les ancêtres RÉELS.
@@ -160,6 +203,19 @@
       path[id] = true;
       var father = parents[0] ? rec(parents[0], gen + 1, slot * 2, path) : null;
       var mother = parents[1] ? rec(parents[1], gen + 1, slot * 2 + 1, path) : null;
+      // Parents manquants de la personne au centre : emplacements « + » (le
+      // 1er parent enregistré occupe la place du père, cf. setParent).
+      if (id === ghostFor && gen < maxGen && p && !cycle) {
+        var known = parents.map(function (pid) { return state.persons[pid]; }).filter(Boolean);
+        if (known.length === 0) {
+          father = ghost(gen + 1, slot * 2, 'H', id);
+          mother = ghost(gen + 1, slot * 2 + 1, 'F', id);
+        } else if (known.length === 1) {
+          var other = known[0].sexe === 'F' ? 'H' : 'F';
+          if (!father) father = ghost(gen + 1, slot * 2, other, id);
+          else if (!mother) mother = ghost(gen + 1, slot * 2 + 1, other, id);
+        }
+      }
       delete path[id];
       var kids = [father, mother].filter(Boolean);
       if (!kids.length) {
@@ -168,6 +224,14 @@
       } else {
         n.cy = kids.reduce(function (s, k) { return s + k.cy; }, 0) / kids.length;
       }
+      return n;
+    }
+    function ghost(gen, slot, sexe, ownerId) {
+      var n = { ghost: true, role: 'parent', sexe: sexe, ownerId: ownerId, gen: gen, slot: slot, cx: gen * COL_W + R };
+      n.cy = (leafCursor + 0.5) * ROW_UNIT;
+      leafCursor += 1;
+      nodes.push(n);
+      byKey[gen + '_' + slot] = n;
       return n;
     }
     rec(rootId, 0, 0, {});
@@ -181,6 +245,7 @@
 
   function renderAncestors(nodesGroup, edgesGroup, state, data, rootId, opts, maxGen) {
     data.nodes.forEach(function (n) {
+      if (n.ghost) { drawGhost(nodesGroup, n, opts); return; }
       var p = state.persons[n.id];
       if (!p) return;
       var parents = p.parentIds || [];
@@ -200,15 +265,15 @@
           var dotY = (a.cy + b.cy) / 2;
           drawDot(edgesGroup, dotX, dotY);
           edgesGroup.appendChild(svgEl('path', {
-            class: 'tree-edge tree-edge-union',
+            class: 'tree-edge tree-edge-union' + (a.ghost ? ' tree-edge-ghost' : ''),
             d: 'M ' + dotX + ' ' + dotY + ' V ' + a.cy + ' H ' + (a.cx - R)
           }));
           edgesGroup.appendChild(svgEl('path', {
-            class: 'tree-edge tree-edge-union',
+            class: 'tree-edge tree-edge-union' + (b.ghost ? ' tree-edge-ghost' : ''),
             d: 'M ' + dotX + ' ' + dotY + ' V ' + b.cy + ' H ' + (b.cx - R)
           }));
           edgesGroup.appendChild(svgEl('path', {
-            class: 'tree-edge tree-edge-child',
+            class: 'tree-edge tree-edge-child' + (a.ghost && b.ghost ? ' tree-edge-ghost' : ''),
             d: 'M ' + (child.cx + R) + ' ' + child.cy + ' H ' + dotX + ' V ' + dotY
           }));
         } else {
@@ -216,7 +281,7 @@
           if (!single) continue;
           var midX = (child.cx + R + single.cx - R) / 2;
           edgesGroup.appendChild(svgEl('path', {
-            class: 'tree-edge tree-edge-child',
+            class: 'tree-edge tree-edge-child' + (single.ghost ? ' tree-edge-ghost' : ''),
             d: 'M ' + (child.cx + R) + ' ' + child.cy + ' H ' + midX + ' V ' + single.cy + ' H ' + (single.cx - R)
           }));
         }
@@ -226,7 +291,9 @@
 
   // --- Descendants (tidy tree : largeur de sous-arbre en "unités") ---
 
-  function buildDescendants(state, rootId, maxGen) {
+  var GHOST_CHILD = '__ghost_child__';
+
+  function buildDescendants(state, rootId, maxGen, ghostFor) {
     var positions = {};
     var edges = [];
     var visited = {};
@@ -235,15 +302,21 @@
       if (visited[id] || gen >= maxGen) return 1;
       visited[id] = true;   // déduplique comme assign() : un même individu n'est compté qu'une fois
       var children = Store.getChildren(state, id);
-      if (!children.length) return 1;
-      var w = 0;
+      var extra = (id === ghostFor) ? 1 : 0;   // emplacement « + Enfant »
+      if (!children.length && !extra) return 1;
+      var w = extra;
       children.forEach(function (c) { w += width(c.id, gen + 1); });
       return Math.max(w, 1);
     }
 
     function assign(id, xStart, gen) {
       visited[id] = true;
+      if (id === GHOST_CHILD) {
+        positions[id] = { gen: gen, x: xStart + 0.5, ghost: true };
+        return xStart + 1;
+      }
       var children = gen < maxGen ? Store.getChildren(state, id) : [];
+      if (id === ghostFor && gen < maxGen) children = children.concat([{ id: GHOST_CHILD }]);
       var x;
       if (!children.length) {
         x = xStart + 0.5;
@@ -269,7 +342,9 @@
 
     var nodes = Object.keys(positions).map(function (id) {
       var pos = positions[id];
-      return { id: id, gen: pos.gen, cx: pos.x * UNIT_W, cy: pos.gen * GEN_H + R };
+      var n = { id: id, gen: pos.gen, cx: pos.x * UNIT_W, cy: pos.gen * GEN_H + R };
+      if (pos.ghost) { n.ghost = true; n.role = 'child'; n.ownerId = ghostFor; }
+      return n;
     });
     var maxGenSeen = nodes.reduce(function (m, n) { return Math.max(m, n.gen); }, 0);
     // Marge droite du cadre : le plus grand écart conjoint réellement utilisé
@@ -278,7 +353,7 @@
     // rogner visuellement le dernier conjoint affiché.
     var rightMargin = SPOUSE_DX;
     nodes.forEach(function (n) {
-      var p = state.persons[n.id];
+      var p = n.ghost ? null : state.persons[n.id];
       var spouses = p ? Store.getSpouses(state, n.id) : [];
       if (spouses.length) {
         rightMargin = Math.max(rightMargin, boxWidth(p) / 2 + boxWidth(spouses[0]) / 2 + 16);
@@ -313,6 +388,7 @@
     // soit juste sous elle si aucun conjoint n'est enregistré.
     var unionPoint = {};
     data.nodes.forEach(function (n) {
+      if (n.ghost) return;
       var spouses = Store.getSpouses(state, n.id);
       if (spouses.length) {
         unionPoint[n.id] = { x: n.cx + spouseGap(n.id, spouses[0]) / 2, y: n.cy, spouse: spouses[0] };
@@ -327,12 +403,16 @@
       var up = unionPoint[a.id];
       var sx = up.x, sy = up.y;
       var ex = b.cx, ey = b.cy - R;
-      var midY = (sy + ey) / 2;
+      if (b.ghost) ey = b.cy - R * 0.8;
+      // Barre horizontale sous les étiquettes nom + années du parent (au
+      // milieu, elle barrait la ligne des années).
+      var midY = Math.max((sy + ey) / 2, a.cy + R + 56);
       var d = 'M ' + sx + ' ' + sy + ' V ' + midY + ' H ' + ex + ' V ' + ey;
-      edgesGroup.appendChild(svgEl('path', { d: d, class: 'tree-edge tree-edge-child' }));
+      edgesGroup.appendChild(svgEl('path', { d: d, class: 'tree-edge tree-edge-child' + (b.ghost ? ' tree-edge-ghost' : '') }));
     });
 
     data.nodes.forEach(function (n) {
+      if (n.ghost) { drawGhost(nodesGroup, n, opts); return; }
       var p = state.persons[n.id];
       if (!p) return;
       var up = unionPoint[n.id];
@@ -352,7 +432,7 @@
           drawPerson(nodesGroup, sp.id, sp, sx, n.cy, opts, false, true, false);
           prevX = sx;
         });
-      } else if (Store.getChildren(state, n.id).length) {
+      } else if (Store.getChildren(state, n.id).length || n.id === opts.ghostFor) {
         drawDot(edgesGroup, up.x, up.y);
       }
       var hasHidden = n.gen === maxGen && Store.getChildren(state, n.id).length > 0;
@@ -365,10 +445,10 @@
   // rendu les accumulait (N navigations → N gestionnaires par geste, l'app
   // ralentissait au fil de la session). Seuls le groupe affiché (viewport)
   // et ses dimensions (box) changent à chaque rendu : voir attach().
-  function attachPanZoom(svg, viewport, box) {
+  function attachPanZoom(svg, viewport, box, keepView) {
     var ctl = svg.__panZoom;
     if (!ctl) { ctl = createPanZoom(svg); svg.__panZoom = ctl; }
-    ctl.attach(viewport, box);
+    ctl.attach(viewport, box, keepView);
     return ctl;
   }
 
@@ -382,17 +462,46 @@
       viewport.setAttribute('transform', 'translate(' + state.tx + ',' + state.ty + ') scale(' + state.scale + ')');
     }
 
+    // Cadrage : tout l'arbre s'il tient à une échelle LISIBLE ; sinon on garde
+    // une échelle lisible (MIN_READABLE) cadrée sur la personne au centre
+    // (box.focus) plutôt que de tout réduire jusqu'à des noms illisibles.
+    var MIN_READABLE = 0.55;
     function fit() {
       var rect = svg.getBoundingClientRect();
-      var w = Math.max(rect.width, 200), h = Math.max(rect.height, 200);
-      var pad = 60;
-      var sx = (w - pad) / box.width;
-      var sy = (h - pad) / box.height;
-      state.scale = Math.min(sx, sy, 1);
-      state.scale = Math.max(state.scale, 0.15);
-      state.tx = (w - box.width * state.scale) / 2;
-      state.ty = pad / 2;
+      if (rect.width < 10 || rect.height < 10) return;   // vue masquée : on recadrera au retour
+      var w = rect.width, h = rect.height;
+      var pad = 40;
+      var s = Math.min((w - pad * 2) / box.width, (h - pad * 2) / box.height, 1);
+      if (s >= MIN_READABLE || !box.focus) {
+        s = Math.max(s, 0.15);
+        state.scale = s;
+        state.tx = (w - box.width * s) / 2;
+        state.ty = (h - box.height * s) / 2;
+      } else {
+        s = MIN_READABLE;
+        state.scale = s;
+        if (box.focusMode === 'descendants') {
+          state.tx = w / 2 - box.focus.x * s;
+          state.ty = pad;
+        } else {
+          state.tx = pad + 70 * s - box.focus.x * s;
+          state.ty = h / 2 - box.focus.y * s;
+        }
+      }
+      state.userMoved = false;
       apply();
+    }
+    // Recadre au redimensionnement (fenêtre, panneau latéral) tant que
+    // l'utilisateur n'a pas lui-même déplacé/zoomé la vue.
+    if (typeof ResizeObserver !== 'undefined') {
+      var lastW = 0, lastH = 0;
+      new ResizeObserver(function () {
+        var r = svg.getBoundingClientRect();
+        if (Math.abs(r.width - lastW) < 2 && Math.abs(r.height - lastH) < 2) return;
+        var wasHidden = lastW < 10 || lastH < 10;
+        lastW = r.width; lastH = r.height;
+        if (viewport && (!state.userMoved || wasHidden)) fit();
+      }).observe(svg);
     }
 
     // Multi-pointeurs : 1 doigt = déplacer, 2 doigts = pincer pour zoomer
@@ -408,7 +517,12 @@
       state.tx = mx - (mx - state.tx) * (newScale / state.scale);
       state.ty = my - (my - state.ty) * (newScale / state.scale);
       state.scale = newScale;
+      state.userMoved = true;
       apply();
+    }
+    function zoomCenter(factor) {
+      var rect = svg.getBoundingClientRect();
+      setScaleAround(state.scale * factor, rect.width / 2, rect.height / 2);
     }
 
     // Seuil de déplacement avant de considérer un vrai pan. On ne capture PAS le
@@ -452,6 +566,7 @@
         if (state.dragging) {
           state.tx += e.clientX - state.lastX;
           state.ty += e.clientY - state.lastY;
+          state.userMoved = true;
           state.lastX = e.clientX; state.lastY = e.clientY;
           apply();
         }
@@ -473,18 +588,18 @@
       e.preventDefault();
       var factor = e.deltaY < 0 ? 1.1 : 0.9;
       var rect = svg.getBoundingClientRect();
-      var mx = e.clientX - rect.left, my = e.clientY - rect.top;
-      var newScale = Math.min(Math.max(state.scale * factor, 0.1), 3);
-      state.tx = mx - (mx - state.tx) * (newScale / state.scale);
-      state.ty = my - (my - state.ty) * (newScale / state.scale);
-      state.scale = newScale;
-      apply();
+      setScaleAround(state.scale * factor, e.clientX - rect.left, e.clientY - rect.top);
     }, { passive: false });
 
     return {
-      attach: function (vp, b) { viewport = vp; box = b; fit(); },
-      zoomIn: function () { state.scale = Math.min(state.scale * 1.2, 3); apply(); },
-      zoomOut: function () { state.scale = Math.max(state.scale * 0.8, 0.1); apply(); },
+      // keepView : même racine/mode (ex. sélection, ajout d'un parent) →
+      // on conserve le zoom et la position plutôt que de tout recadrer.
+      attach: function (vp, b, keepView) {
+        viewport = vp; box = b;
+        if (keepView && state.userMoved) apply(); else fit();
+      },
+      zoomIn: function () { zoomCenter(1.2); },
+      zoomOut: function () { zoomCenter(1 / 1.2); },
       reset: fit
     };
   }
@@ -506,16 +621,24 @@
 
     var data, box;
     if (mode === 'descendants') {
-      data = buildDescendants(state, rootId, maxGen);
+      data = buildDescendants(state, rootId, maxGen, opts.ghostFor);
       renderDescendants(nodesGroup, edgesGroup, state, data, rootId, opts, maxGen);
     } else {
-      data = buildAncestors(state, rootId, maxGen);
+      data = buildAncestors(state, rootId, maxGen, opts.ghostFor);
       renderAncestors(nodesGroup, edgesGroup, state, data, rootId, opts, maxGen);
     }
-    box = { width: Math.max(data.width, R * 2), height: Math.max(data.height, R * 2) };
+    box = { width: Math.max(data.width, R * 2), height: Math.max(data.height, R * 2), focusMode: mode };
+    data.nodes.forEach(function (n) { if (n.id === rootId) box.focus = { x: n.cx, y: n.cy }; });
 
-    return attachPanZoom(svg, viewport, box);
+    return attachPanZoom(svg, viewport, box, opts.keepView);
   }
 
-  global.Tree = { render: render };
+  // Met à jour la sélection sans redessiner (évite de recadrer la vue).
+  function markSelected(svg, id) {
+    Array.prototype.forEach.call(svg.querySelectorAll('.tree-node'), function (g) {
+      g.classList.toggle('is-selected', g.getAttribute('data-id') === id);
+    });
+  }
+
+  global.Tree = { render: render, markSelected: markSelected, yearOf: yearOf };
 })(window);
