@@ -125,6 +125,31 @@
       });
   }
 
+  // Jeton d'écriture : preuve du mot de passe envoyée avec chaque sauvegarde.
+  // Dérivé par PBKDF2 avec un sel FIXE distinct du sel de chiffrement (le
+  // jeton ne permet donc pas de déchiffrer). Le serveur n'en garde qu'une
+  // empreinte SHA-256 et refuse toute écriture qui ne correspond pas
+  // (scripts/genealogie_save.sh côté Home Assistant).
+  var authCache = { pw: null, token: null };
+  function authToken() {
+    return ensurePassword().then(function (pw) {
+      if (authCache.pw === pw && authCache.token) return authCache.token;
+      var enc = new TextEncoder();
+      return subtle.importKey('raw', enc.encode(pw), 'PBKDF2', false, ['deriveBits'])
+        .then(function (base) {
+          return subtle.deriveBits(
+            { name: 'PBKDF2', salt: enc.encode('genealogie-auth-v1'), iterations: ITER, hash: 'SHA-256' },
+            base, 256);
+        }).then(function (bits) {
+          var hex = Array.prototype.map.call(new Uint8Array(bits), function (b) {
+            return ('0' + b.toString(16)).slice(-2);
+          }).join('');
+          authCache = { pw: pw, token: hex };
+          return hex;
+        });
+    });
+  }
+
   // Garantit une clé dérivée du mot de passe + sel courant (prompt si besoin).
   function ensureKey() {
     var salt = currentSaltB64();
@@ -351,29 +376,49 @@
   // Envoi en morceaux : HA limite le rendu d'un template à 262144 caractères,
   // or un gros arbre (photos base64…) dépasse même gzippé. On découpe le b64 en
   // tranches < limite ; le shell_command HA les réassemble (idx/total/id).
-  function postInChunks(url, b64, device) {
+  function postInChunks(url, b64, device, auth) {
     // 100 Ko/chunk : sous la limite Linux MAX_ARG_STRLEN (131072 o par argument
     // execve — le chunk est passé en argument de `bash` par le shell_command) ET
     // sous la limite de rendu de template HA (262144).
     var CHUNK = 100000;
-    if (b64.length <= CHUNK) {
-      return netPostJson(url, { b64: b64, device: device, idx: 0, total: 1, id: 'single' });
-    }
-    var total = Math.ceil(b64.length / CHUNK);
+    var total = Math.max(1, Math.ceil(b64.length / CHUNK));
+    // Id unique même pour un envoi en un morceau : sert à lire le verdict du
+    // serveur (data/push_status.json) pour CET envoi.
     var id = 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     var i = 0;
     function next() {
-      if (i >= total) return Promise.resolve({ ok: true, status: 200 });
+      if (i >= total) return Promise.resolve({ ok: true, status: 200, id: id });
       var idx = i++;
       return netPostJson(url, {
         b64: b64.slice(idx * CHUNK, (idx + 1) * CHUNK),
-        device: device, idx: idx, total: total, id: id
+        device: device, idx: idx, total: total, id: id, auth: auth
       }).then(function (r) {
         if (!r || !r.ok) throw new Error('chunk ' + idx + '/' + total + ' HTTP ' + (r && r.status));
         return next();
       });
     }
     return next();
+  }
+
+  // Verdict du serveur pour un envoi (le webhook HA répond 200 avant même
+  // d'avoir traité la requête). 'ok' | 'denied' | 'unknown' (pas de réponse à
+  // temps : on ne bloque pas, l'envoi suivant redira le verdict).
+  function pushVerdict(id) {
+    var dataUrl = resolved().dataUrl;
+    var statusUrl = dataUrl.replace(/tree\.json(\?.*)?$/, 'push_status.json');
+    if (statusUrl === dataUrl) return Promise.resolve('unknown');
+    var tries = 0;
+    function poll() {
+      tries++;
+      return new Promise(function (r) { setTimeout(r, tries === 1 ? 700 : 1500); })
+        .then(function () { return netGetJson(statusUrl + '?_=' + Date.now()); })
+        .then(function (st) {
+          if (st && st.id === id) return st.ok ? 'ok' : 'denied';
+          if (tries < 5) return poll();
+          return 'unknown';
+        }, function () { return tries < 5 ? poll() : 'unknown'; });
+    }
+    return poll();
   }
 
   // --- interception des écritures de l'app --------------------------------
@@ -410,10 +455,22 @@
         enc: 'v1', salt: currentSaltB64(), iv: enc.iv, ct: enc.ct, zip: enc.zip,
         meta: { updatedAt: s.meta.updatedAt, device: deviceId }
       };
-      return postInChunks(webhookUrl, strToB64(JSON.stringify(envelope)), deviceId);
+      return authToken().then(function (auth) {
+        return postInChunks(webhookUrl, strToB64(JSON.stringify(envelope)), deviceId, auth);
+      });
     }).then(function (r) {
-      if (r && r.ok) { lastSyncedJSON = plain; return 'envoyé'; }
-      throw new Error('HTTP ' + (r && r.status));
+      if (!(r && r.ok)) throw new Error('HTTP ' + (r && r.status));
+      return pushVerdict(r.id).then(function (v) {
+        if (v === 'denied') {
+          // Le serveur n'a pas reconnu le mot de passe : rien n'a été écrit.
+          var err = new Error('sauvegarde refusée : mot de passe famille incorrect');
+          err.denied = true;
+          badPassword();
+          throw err;
+        }
+        lastSyncedJSON = plain;
+        return 'envoyé';
+      });
     }).catch(function (e) { console.warn('genealogie: push échoué', e); throw e; });
   }
 
