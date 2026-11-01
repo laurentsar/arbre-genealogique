@@ -212,7 +212,16 @@
     return e;
   }
 
+  // Photo d'une personne : miniature JPEG/PNG/WebP en data URL base64. Toute
+  // autre valeur (données importées, synchro…) est ignorée — jamais injectée
+  // telle quelle dans un attribut src/href.
+  function validPhoto(s) {
+    return typeof s === 'string' && s.length < 400000 &&
+      /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(s) ? s : '';
+  }
+
   global.GenUtil = {
+    validPhoto: validPhoto,
     haProxyUrl: haProxyUrl,
     netErrorMessage: netErrorMessage,
     $: $, $all: $all,

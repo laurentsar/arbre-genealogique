@@ -203,6 +203,16 @@
   <form id="personForm">
     <h2 id="personFormTitle">Nouvelle personne</h2>
     <button type="button" id="btnPasteGeneanet" class="btn btn-ghost btn-sm" style="margin-bottom:10px">📋 Coller depuis Geneanet</button>
+    <div class="photo-field">
+      <span id="fPhotoPreview" class="avatar photo-preview" aria-hidden="true">📷</span>
+      <div class="photo-field-actions">
+        <label class="btn btn-ghost btn-sm photo-pick">🖼️ <span id="fPhotoPickLbl">Ajouter une photo</span>
+          <input id="fPhotoFile" type="file" accept="image/*" hidden>
+        </label>
+        <button type="button" id="fPhotoRemove" class="btn btn-ghost btn-sm" hidden>Retirer</button>
+        <span id="fPhotoMsg" class="photo-msg" role="status"></span>
+      </div>
+    </div>
     <div class="form-grid">
       <label>Prénom<input id="fPrenom" type="text"></label>
       <label>Nom<input id="fNom" type="text"></label>

@@ -76,3 +76,12 @@ test('timeAgo', () => {
   assert.equal(U.timeAgo('2026-01-01T11:30:00Z', now), 'il y a 30 min');
   assert.equal(U.timeAgo('2025-12-30T12:00:00Z', now), 'il y a 2 j');
 });
+
+test('photo : seules les data URL image base64 sont acceptées', () => {
+  assert.equal(U.validPhoto('data:image/jpeg;base64,/9j/4AAQSk=='), 'data:image/jpeg;base64,/9j/4AAQSk==');
+  assert.equal(U.validPhoto('data:image/png;base64,iVBORw0KGgo='), 'data:image/png;base64,iVBORw0KGgo=');
+  assert.equal(U.validPhoto('javascript:alert(1)'), '');
+  assert.equal(U.validPhoto('data:image/svg+xml;base64,PHN2Zz4='), '');
+  assert.equal(U.validPhoto('data:image/jpeg;base64,AAA" onerror="x'), '');
+  assert.equal(U.validPhoto(undefined), '');
+});

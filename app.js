@@ -47,7 +47,9 @@
   function avatarHTML(p) {
     var sexe = (p.sexe === 'H' || p.sexe === 'F') ? p.sexe : null;
     var badge = sexe ? '<span class="avatar-gender sexe-' + sexe + '">' + (sexe === 'H' ? '♂' : '♀') + '</span>' : '';
-    return '<span class="avatar' + (sexe ? ' sexe-' + sexe : '') + '">' + escapeHtml(initials(p)) + badge + '</span>';
+    var photo = U.validPhoto(p.photo);
+    var inner = photo ? '<img src="' + photo + '" alt="">' : escapeHtml(initials(p));
+    return '<span class="avatar' + (photo ? ' has-photo' : '') + (sexe ? ' sexe-' + sexe : '') + '">' + inner + badge + '</span>';
   }
 
   function subLine(p) {
@@ -1110,6 +1112,35 @@
 
   // --- Formulaire personne (créer / modifier) --------------------------
 
+  // Photo -> miniature carrée JPEG (recadrage centré, 192 px, ~10 Ko).
+  function photoThumb(file) {
+    var SIZE = 192;
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var s = Math.min(img.naturalWidth, img.naturalHeight);
+          if (!s) throw new Error('vide');
+          var c = document.createElement('canvas');
+          c.width = c.height = SIZE;
+          var ctx = c.getContext('2d');
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(0, 0, SIZE, SIZE);
+          // Visage souvent dans le haut d'un portrait : recadrage décalé vers le haut
+          var sx = (img.naturalWidth - s) / 2;
+          var sy = img.naturalHeight > img.naturalWidth ? (img.naturalHeight - s) * 0.25 : (img.naturalHeight - s) / 2;
+          ctx.drawImage(img, sx, sy, s, s, 0, 0, SIZE, SIZE);
+          var out = U.validPhoto(c.toDataURL('image/jpeg', 0.82));
+          if (!out) throw new Error('conversion');
+          resolve(out);
+        } catch (e) { reject(e); } finally { URL.revokeObjectURL(url); }
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('illisible')); };
+      img.src = url;
+    });
+  }
+
   // `prefill` (utilisé seulement pour une NOUVELLE personne, ignoré en
   // modification) : reprend la recherche qui a mené ici — évite de retaper
   // un nom qu'on vient déjà de chercher sans le trouver (ex. « + Nouvelle
@@ -1129,6 +1160,32 @@
       $('#fDecesDate').value = existing && existing.deces ? formatDateFr(existing.deces.date) : '';
       $('#fDecesLieu').value = existing && existing.deces ? existing.deces.lieu : '';
       $('#fNotes').value = existing ? existing.notes : '';
+
+      // Photo : miniature recadrée/compressée à l'ajout (quelques Ko), pour
+      // tenir dans le stockage local et la synchro.
+      var photoVal = existing ? U.validPhoto(existing.photo) : '';
+      var photoInput = $('#fPhotoFile');
+      var photoRemove = $('#fPhotoRemove');
+      $('#fPhotoMsg').textContent = '';
+      function showPhoto() {
+        var prev = $('#fPhotoPreview');
+        prev.innerHTML = photoVal ? '<img src="' + photoVal + '" alt="">' : '📷';
+        photoRemove.hidden = !photoVal;
+        $('#fPhotoPickLbl').textContent = photoVal ? 'Changer la photo' : 'Ajouter une photo';
+      }
+      function onPhotoPick() {
+        var file = photoInput.files && photoInput.files[0];
+        photoInput.value = '';
+        if (!file) return;
+        $('#fPhotoMsg').textContent = 'Préparation…';
+        photoThumb(file).then(function (url) {
+          photoVal = url; showPhoto(); $('#fPhotoMsg').textContent = '';
+        }).catch(function () {
+          $('#fPhotoMsg').textContent = 'Image illisible (format non pris en charge ?)';
+        });
+      }
+      function onPhotoRemove() { photoVal = ''; showPhoto(); }
+      showPhoto();
 
       var resolved = false;
       function finish(val) { if (resolved) return; resolved = true; resolve(val); }
@@ -1161,7 +1218,8 @@
           decede: $('#fDecede').checked,
           naissance: { date: nDate, lieu: $('#fNaissanceLieu').value.trim() },
           deces: { date: dDate, lieu: $('#fDecesLieu').value.trim() },
-          notes: $('#fNotes').value.trim()
+          notes: $('#fNotes').value.trim(),
+          photo: photoVal
         };
         var person = null;
         try {
@@ -1180,7 +1238,11 @@
         form.removeEventListener('submit', onSubmit);
         btnCancel.removeEventListener('click', onCancel);
         dlg.removeEventListener('close', onClose);
+        photoInput.removeEventListener('change', onPhotoPick);
+        photoRemove.removeEventListener('click', onPhotoRemove);
       }
+      photoInput.addEventListener('change', onPhotoPick);
+      photoRemove.addEventListener('click', onPhotoRemove);
       form.addEventListener('submit', onSubmit);
       btnCancel.addEventListener('click', onCancel);
       dlg.addEventListener('close', onClose);
@@ -1873,7 +1935,7 @@
 
   // --- Version affichée ---------------------------------------------------
 
-  var APP_VERSION = '1.7.1';
+  var APP_VERSION = '1.8.0';
   var vTop = $('#appVersion'); if (vTop) vTop.textContent = 'v' + APP_VERSION;
   var vSet = $('#appVersionSettings'); if (vSet) vSet.textContent = APP_VERSION;
 

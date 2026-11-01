@@ -77,11 +77,23 @@
     // Halo de sélection (visible seulement avec .is-selected, voir CSS)
     g.appendChild(svgEl('circle', { class: 'tree-select-ring', r: R + 7 }));
 
-    // Pastille + initiales
+    // Pastille + photo (si présente) ou initiales
     g.appendChild(svgEl('circle', { class: 'tree-avatar', r: R }));
-    var initEl = svgEl('text', { class: 'tree-initials', 'text-anchor': 'middle', dy: '0.34em' });
-    initEl.textContent = initials(p);
-    g.appendChild(initEl);
+    var photo = global.GenUtil && global.GenUtil.validPhoto ? global.GenUtil.validPhoto(p.photo) : '';
+    if (photo) {
+      var img = svgEl('image', {
+        class: 'tree-photo', x: -R, y: -R, width: R * 2, height: R * 2,
+        preserveAspectRatio: 'xMidYMid slice', 'clip-path': 'url(#treePhotoClip)'
+      });
+      img.setAttribute('href', photo);
+      g.appendChild(img);
+      // Liseré par-dessus la photo (couleur du sexe / racine / sélection)
+      g.appendChild(svgEl('circle', { class: 'tree-avatar tree-avatar-ring', r: R }));
+    } else {
+      var initEl = svgEl('text', { class: 'tree-initials', 'text-anchor': 'middle', dy: '0.34em' });
+      initEl.textContent = initials(p);
+      g.appendChild(initEl);
+    }
 
     // Nom (agrandi) sur un bandeau pour rester lisible sur le fond sombre
     var info = label(p);
@@ -610,6 +622,13 @@
     var rootId = opts.rootId;
     while (svg.firstChild) svg.removeChild(svg.firstChild);
     if (!rootId || !state.persons[rootId]) return null;
+
+    // Découpe ronde partagée des photos (coordonnées locales de chaque nœud)
+    var defs = svgEl('defs', {});
+    var clip = svgEl('clipPath', { id: 'treePhotoClip' });
+    clip.appendChild(svgEl('circle', { r: R - 1.5 }));
+    defs.appendChild(clip);
+    svg.appendChild(defs);
 
     var viewport = svgEl('g', { class: 'tree-viewport' });
     svg.appendChild(viewport);

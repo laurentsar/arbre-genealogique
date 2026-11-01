@@ -716,3 +716,13 @@ dialog h2 { margin-top: 0; font-size: 1.05rem; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation-duration: 0.01ms !important; }
 }
+
+/* --- Photos des personnes ------------------------------------------- */
+.tree-node .tree-avatar.tree-avatar-ring { fill: none; filter: none; }
+.tree-photo { pointer-events: none; }
+.photo-field { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.photo-field .photo-preview { width: 64px; height: 64px; font-size: 1.5rem; }
+.photo-field-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.photo-pick { cursor: pointer; }
+.photo-msg { font-size: 0.85rem; color: var(--muted, inherit); }
+.avatar.has-photo { background: var(--surface-2); }
