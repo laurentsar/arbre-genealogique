@@ -49,7 +49,11 @@
       .join('&');
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     if (onController) onController(ctrl);
-    var fetchPromise = fetch(API + '?' + qs, { credentials: 'omit', signal: ctrl ? ctrl.signal : undefined })
+    var fetchPromise = fetch((global.GenUtil && global.GenUtil.haProxyUrl('insee', qs)) || (API + '?' + qs),
+        { credentials: 'omit', signal: ctrl ? ctrl.signal : undefined })
+      .catch(function (e) {
+        throw (global.GenUtil && e && e.name !== 'AbortError') ? global.GenUtil.netErrorMessage(e, 'Fichier des décès') : e;
+      })
       .then(function (r) {
         if (!r.ok) throw new Error('INSEE HTTP ' + r.status);
         return r.json();

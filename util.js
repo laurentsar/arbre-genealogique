@@ -189,7 +189,32 @@
     return result;
   }
 
+  // Relais Home Assistant (custom_components/genealogie_proxy) pour WikiTree /
+  // INSEE : ces API ne renvoient pas d'en-tête CORS, donc un fetch() direct
+  // depuis un navigateur échoue toujours (« Failed to fetch »). Disponible
+  // seulement quand l'app est servie PAR Home Assistant (même origine, ex.
+  // /local/genealogie/) ; renvoie null ailleurs (github.io, dev, tests).
+  function haProxyUrl(src, qs) {
+    if (typeof location === 'undefined') return null;
+    var b = typeof window !== 'undefined' ? window.GENEALOGIE_BACKEND : null;
+    var onHa = /^\/local\//.test(location.pathname || '') ||
+      !!(b && typeof b.webhookUrl === 'string' && b.webhookUrl.charAt(0) === '/');
+    if (!onHa) return null;
+    return '/api/genealogie_proxy/' + src + (qs ? '?' + qs : '');
+  }
+
+  // Message lisible pour un échec réseau du navigateur (TypeError de fetch).
+  function netErrorMessage(e, label) {
+    if (e && e.name === 'TypeError') {
+      return new Error(label + ' inaccessible depuis le navigateur (le site refuse les appels web) — ' +
+        'utilise l’appli Android ou la version servie par Home Assistant');
+    }
+    return e;
+  }
+
   global.GenUtil = {
+    haProxyUrl: haProxyUrl,
+    netErrorMessage: netErrorMessage,
     $: $, $all: $all,
     isValidDate: isValidDate,
     formatDateFr: formatDateFr,
